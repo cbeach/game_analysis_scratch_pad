@@ -137,6 +137,26 @@ def display_lines_with_repeating_tiles():
     cv2.waitKey(0)
 
 
+def accumulate_csv_data(csv_files, dest):
+    accumulator = None
+    for i, f in enumerate(csv_files):
+        print("File {} of {} processed. {}% complete".format(i, len(files),
+            (float(i) / float(len(files))) * 100))
+        with open(f, 'r') as fp:
+            reader = csv.reader(fp)
+            for row in reader:
+                if accumulator is None:
+                    accumulator = np.zeros(len(row))
+                accumulator = np.add(accumulator, np.array(map(abs, map(float, row))))
+    return accumulator
+
+
 if __name__ == '__main__':
-    files = glob('data/*')
-    analyze_files(perform_fft, files, 'analyzed/fft', fraction=1.0, vertical=True)
+    files = glob('analyzed/fft/vertical/*')
+    #analyze_files(perform_fft, files, 'analyzed/fft', fraction=1.0, vertical=True)
+    accume = accumulate_csv_data(files, 'analyzed/vertical_fft_accume.csv')
+    with open('analyzed/vertical_fft_accum.csv', 'wb') as fp:
+        writer = csv.writer(fp)
+        writer.writerow(accume)
+    plt.plot(accume)
+    plt.show()
