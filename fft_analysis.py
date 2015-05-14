@@ -44,24 +44,36 @@ def find_peaks(data):
 
 
 def get_tiles(image, harmonics):
-    ret_val = np.zeros(len(image))
+    ret_val = []
     ret_val_2 = []
+    # Iterate over all of the harmonics
     for h in harmonics:
+        # Check each row in the image for repeating patterns
         for i, row in enumerate(image):
             ret_val_2.append((np.mean(row), np.std(row)))
             previous_slice = None
-            for k, slc in enumerate(np.split(row, h)):
-                if reduce(lambda a, b: a == True and b == True, np.equal(previous_slice, slc)):
-                    ret_val[i] += 1
+            run = 0
+            runs = []
+            for k, slc in enumerate(np.split(row, len(row) / h)):
+                # Check if the previous slice is the same as the current one
+                # (repeating pattern). Record the length of each run.
+
+                if reduce(lambda a, b: a == True and b == True, np.equal(previous_slice, slc)) and np.std(slc) != 0:
+                    run += 1
+                elif run != 0:
+                    runs.append(run)
+                    run = 0
                 previous_slice = slc
+            if run != 0:
+                runs.append(run)
+            ret_val.append(runs)
+
     return ret_val, ret_val_2
 
 
 def analyze_files(func, source_files, dest, fraction=1.0, *args, **kwargs):
     files = random.sample(source_files, int(len(source_files) * fraction))
     for i, f in enumerate(files):
-        if i < 1045:
-            continue
         print("File {} of {} processed. {}% complete".format(i, len(files),
             (float(i) / float(len(files))) * 100))
         try:
@@ -87,9 +99,10 @@ def perform_fft(path, dest, file_name, vertical=False):
             csv_out.writerow(row)
 
 
-def display_lines_with_repeating_tiles():
+def scratch_pad():
+    """Currently displays lines with repeating patters"""
     d = []
-    with open('analyzed/accumulated_fft.csv', 'r') as fp:
+    with open('analyzed/horizontal_fft_accum.csv', 'r') as fp:
         reader = csv.reader(fp)
         for i in reader:
             d = i
@@ -125,11 +138,15 @@ def display_lines_with_repeating_tiles():
     image = cv2.imread(image)
     #image = image[423:439, :16]
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    tiled_lines, averages = get_tiles(gray_image, [16])  # sorted_harmonics)
+    runs, averages = get_tiles(gray_image, [32])  # sorted_harmonics)
+    with open('temp', 'w') as fp:
+        for j, i in enumerate(runs):
+            fp.write('{}\n'.format(i))
 
-    for i, t in enumerate(tiled_lines):
-        if averages[i][1] > 30 and t > 12:
-            image[i] = [(0, 0, 255)] * len(image[t])
+            if sum(i) > 13:
+                print('hello')
+                image[j] = [(255, 0, 0)] * len(image[j])
+
 
     cv2.rectangle(image, (0, 400), (31, 432), (255, 0, 0))
     cv2.namedWindow("Display", cv2.CV_WINDOW_AUTOSIZE)
@@ -152,11 +169,54 @@ def accumulate_csv_data(csv_files, dest):
 
 
 if __name__ == '__main__':
-    files = glob('analyzed/fft/vertical/*')
+
+    files = glob('data/*')
+    cv2.namedWindow("Display", cv2.CV_WINDOW_AUTOSIZE)
+    prev = None
+    for i in range(3800):
+        print(i)
+        image = cv2.imread('data/{}.png'.format(i))
+        diff = np.zeros(image.shape)
+        if prev is not None:
+            cv2.absdiff(image, prev, diff)
+            cv2.imshow("Display", diff)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        prev = image
+
+    ##for f in files:
+    #rows = []
+    #means = []
+    #stds = []
+    #signals = []
+    #with open('analyzed/fft/vertical/3000.csv', 'r') as fp:
+    #    reader = csv.reader(fp)
+    #    for row in reader:
+    #        row = np.array(map(float, row))
+    #        rows.append(row)
+    #        mean = np.mean(row)
+    #        std = np.std(row)
+    #        a = 0
+    #        for i in row:
+    #            if i > mean + 2.5 * std:
+    #                a += 1
+    #        means.append(mean)
+    #        stds.append(std)
+    #        signals.append(a)
+
+    #with open('analyzed/vertical_fft_accum.csv', 'r') as fp:
+    #    reader = csv.reader(fp)
+    #    for row in reader:
+    #        row = map(float, row)
+    #        for i in range(15):
+    #            row[i] = 0
+    #        plt.plot(row)
+    #plt.show()
+
     #analyze_files(perform_fft, files, 'analyzed/fft', fraction=1.0, vertical=True)
-    accume = accumulate_csv_data(files, 'analyzed/vertical_fft_accume.csv')
-    with open('analyzed/vertical_fft_accum.csv', 'wb') as fp:
-        writer = csv.writer(fp)
-        writer.writerow(accume)
-    plt.plot(accume)
-    plt.show()
+    #accume = accumulate_csv_data(files, 'analyzed/vertical_fft_accume.csv')
+    #with open('analyzed/vertical_fft_accum.csv', 'wb') as fp:
+    #    writer = csv.writer(fp)
+    #    writer.writerow(accume)
+    #plt.plot(accume)
+    #plt.show()
