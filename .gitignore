@@ -1,5 +1,5 @@
 *.swp
 data/*
 nestopia/*
-roms/*
+roms/NES/original/
 analyzed/*
