@@ -1,3 +1,4 @@
+from glob import glob
 from collections import Counter
 import sys
 import time
@@ -6,6 +7,14 @@ from matplotlib import pyplot as plt
 from termcolor import cprint
 import cv2
 import numpy as np
+
+
+def bgr2rgb(image):
+    image = image.copy()
+    for x, row in enumerate(image):
+        for y, pixel in enumerate(row):
+            image[x][y] = np.array((pixel[2], pixel[1], pixel[0]))
+    return image
 
 
 def get_alpha_connected_pixels(image, coord):
@@ -159,39 +168,58 @@ def get_palette(image, as_counter=False):
 
 
 if __name__ == '__main__':
-    template_dirs = ['sprites/mario', 'sprites/tiles', 'sprites/entities',
-    template = cv2.imread('sprites/mario/small_jump.png')
-    template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-    src_frame = cv2.imread('data/625.png', cv2.IMREAD_COLOR)
-    src_frame = cv2.cvtColor(src_frame, cv2.COLOR_BGR2GRAY)
+    templates = {
+        'mario': [
+            cv2.imread('sprites/mario/small_jump.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/mario/small_standing.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/mario/small_run_1.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/mario/small_run_2.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/mario/small_run_3.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/mario/big_standing.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+        ],
+        'tile': [
+            cv2.imread('sprites/tiles/ground.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/tiles/block.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/tiles/qblock_spent.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/tiles/bricks.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/tiles/qblock_3.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/tiles/qblock_1.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/tiles/qblock_2.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+        ],
+        'entities': [
+            cv2.imread('sprites/entities/mushroom.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/entities/goomba_1.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+            cv2.imread('sprites/entities/goomba_2.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
+        ],
+    }
 
+    color_frame = cv2.imread('data/625.png', cv2.IMREAD_COLOR)
+    gray_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2GRAY)
 
+    frame = gray_frame.copy()
+    frame2 = gray_frame.copy()
 
-    methods = [cv2.TM_CCOEFF, cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR,
-               cv2.TM_CCORR_NORMED, cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]
+    template_wad = []
+    template_wad.extend(templates['mario'])
+    template_wad.extend(templates['tile'])
+    template_wad.extend(templates['entities'])
 
-    cv2.namedWindow("Display", cv2.CV_WINDOW_AUTOSIZE)
-    w, h = template.shape[::-1]
-    for method in methods:
-        frame = src_frame.copy()
-        frame2 = frame.copy()
-        res = cv2.matchTemplate(frame, template, method)
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-        if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
-                top_left = min_loc
-        else:
-            top_left = max_loc
-        bottom_right = (top_left[0] + w, top_left[1] + h)
-        cv2.rectangle(frame, top_left, bottom_right, 255, 2)
+    for template in template_wad:
+        res = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
 
-        plt.subplot(121), plt.imshow(res, cmap='gray')
-        plt.title('Matching Result'), plt.xticks([]), plt.yticks([])
-        plt.subplot(122), plt.imshow(frame, cmap='gray')
-        plt.title('Detected Point'), plt.xticks([]), plt.yticks([])
-        plt.suptitle(method)
+        threshold = 0.99
+        loc = np.where(res >= threshold)
+        w, h = templates['tile'][0].shape
+        for pt in zip(*loc[::-1]):
+            cv2.rectangle(color_frame, pt, (pt[0] + w, pt[1] + h), (0, 0, 255), 2)
 
-        plt.show()
+    plt.subplot(121), plt.imshow(res, cmap='gray')
+    plt.title('Matching Result'), plt.xticks([]), plt.yticks([])
+    plt.subplot(122), plt.imshow(bgr2rgb(color_frame))
+    plt.title('Detected Point'), plt.xticks([]), plt.yticks([])
+    plt.suptitle('tiles')
 
+    plt.show()
 
     #for v, c in Counter(palette).items():
     #    print('{}: {}'.format(v, c))
