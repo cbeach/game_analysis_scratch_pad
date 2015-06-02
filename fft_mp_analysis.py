@@ -1,7 +1,9 @@
 import cv2
+import fnmatch
 import itertools
 import csv
 from glob import glob
+import multiprocessing
 import random
 import sys
 import traceback
@@ -44,30 +46,16 @@ def find_peaks(data):
 
 
 def get_tiles(image, harmonics):
-    ret_val = []
+    ret_val = np.zeros(len(image))
     ret_val_2 = []
-    # Iterate over all of the harmonics
     for h in harmonics:
-        # Check each row in the image for repeating patterns
         for i, row in enumerate(image):
             ret_val_2.append((np.mean(row), np.std(row)))
             previous_slice = None
-            run = 0
-            runs = []
-            for k, slc in enumerate(np.split(row, len(row) / h)):
-                # Check if the previous slice is the same as the current one
-                # (repeating pattern). Record the length of each run.
-
-                if reduce(lambda a, b: a == True and b == True, np.equal(previous_slice, slc)) and np.std(slc) != 0:
-                    run += 1
-                elif run != 0:
-                    runs.append(run)
-                    run = 0
+            for k, slc in enumerate(np.split(row, h)):
+                if reduce(lambda a, b: a == True and b == True, np.equal(previous_slice, slc)):
+                    ret_val[i] += 1
                 previous_slice = slc
-            if run != 0:
-                runs.append(run)
-            ret_val.append(runs)
-
     return ret_val, ret_val_2
 
 
@@ -82,7 +70,7 @@ def analyze_files(func, source_files, dest, fraction=1.0, *args, **kwargs):
             traceback.print_exc()
 
 
-def perform_fft(path, dest, file_name, vertical=False):
+def perform_fft(path, dest, vertical=False):
     gray_image = cv2.imread(path, cv2.CV_LOAD_IMAGE_GRAYSCALE)
     if vertical is True:
         gray_image = np.rot90(gray_image)
@@ -93,16 +81,15 @@ def perform_fft(path, dest, file_name, vertical=False):
         fft.append(rfft(row))
     del gray_image
 
-    with open('{}/{}/{}.csv'.format(dest, orientation, file_name), 'wb') as output:
+    with open(dest, 'wb') as output:
         csv_out = csv.writer(output)
         for row in fft:
             csv_out.writerow(row)
 
 
-def scratch_pad():
-    """Currently displays lines with repeating patters"""
+def display_lines_with_repeating_tiles():
     d = []
-    with open('analyzed/horizontal_fft_accum.csv', 'r') as fp:
+    with open('analyzed/accumulated_fft.csv', 'r') as fp:
         reader = csv.reader(fp)
         for i in reader:
             d = i
@@ -138,15 +125,11 @@ def scratch_pad():
     image = cv2.imread(image)
     #image = image[423:439, :16]
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    runs, averages = get_tiles(gray_image, [32])  # sorted_harmonics)
-    with open('temp', 'w') as fp:
-        for j, i in enumerate(runs):
-            fp.write('{}\n'.format(i))
+    tiled_lines, averages = get_tiles(gray_image, [16])  # sorted_harmonics)
 
-            if sum(i) > 13:
-                print('hello')
-                image[j] = [(255, 0, 0)] * len(image[j])
-
+    for i, t in enumerate(tiled_lines):
+        if averages[i][1] > 30 and t > 12:
+            image[i] = [(0, 0, 255)] * len(image[t])
 
     cv2.rectangle(image, (0, 400), (31, 432), (255, 0, 0))
     cv2.namedWindow("Display", cv2.CV_WINDOW_AUTOSIZE)
@@ -157,8 +140,8 @@ def scratch_pad():
 def accumulate_csv_data(csv_files, dest):
     accumulator = None
     for i, f in enumerate(csv_files):
-        print("File {} of {} processed. {}% complete".format(i, len(csv_files),
-            (float(i) / float(len(csv_files))) * 100))
+        print("File {} of {} processed. {}% complete".format(i, len(files),
+            (float(i) / float(len(files))) * 100))
         with open(f, 'r') as fp:
             reader = csv.reader(fp)
             for row in reader:
@@ -168,62 +151,26 @@ def accumulate_csv_data(csv_files, dest):
     return accumulator
 
 
-def masked_difference():
-    files = glob('data/*')
-    cv2.namedWindow("Display", cv2.CV_WINDOW_AUTOSIZE)
-    prev = None
-    for i in range(len(files)):
-        image = cv2.imread('data/{}.png'.format(i))
-        if prev is not None:
-            diff = image - prev
-            gray_diff = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-            ret, mask = cv2.threshold(gray_diff, 10, 200, cv2.THRESH_BINARY)
-            print(type(mask), mask)
-            #cv2.absdiff(image, prev, diff)
-            diff = cv2.bitwise_and(image, image, mask=mask)
+def mp_compatible_perform_fft(file_info):
+    file_num, total_files = file_info
+    print("File {} of {} processed. {}% complete".format(file_num, total_files,
+        (float(file_num) / float(total_files)) * 100))
+    perform_fft('data/{}.png'.format(file_num), 'analyzed/fft/horizontal/{}.csv'.format(file_num))
+    perform_fft('data/{}.png'.format(file_num), 'analyzed/fft/vertical/{}.csv'.format(file_num), vertical=True)
 
-            cv2.imshow("Display", diff)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-        prev = image
 
 if __name__ == '__main__':
-    scratch_pad()
-    #masked_difference()
+    files = glob('data/*')
+    files = range(len(files))
+    files = [(i, len(files)) for i in files]
+    p = multiprocessing.Pool(6)
+    p.map(mp_compatible_perform_fft, files)
 
-    ##for f in files:
-    #rows = []
-    #means = []
-    #stds = []
-    #signals = []
-    #with open('analyzed/fft/vertical/3000.csv', 'r') as fp:
-    #    reader = csv.reader(fp)
-    #    for row in reader:
-    #        row = np.array(map(float, row))
-    #        rows.append(row)
-    #        mean = np.mean(row)
-    #        std = np.std(row)
-    #        a = 0
-    #        for i in row:
-    #            if i > mean + 2.5 * std:
-    #                a += 1
-    #        means.append(mean)
-    #        stds.append(std)
-    #        signals.append(a)
-
-    #with open('analyzed/vertical_fft_accum.csv', 'r') as fp:
-    #    reader = csv.reader(fp)
-    #    for row in reader:
-    #        row = map(float, row)
-    #        for i in range(15):
-    #            row[i] = 0
-    #        plt.plot(row)
-    #plt.show()
-
-    #analyze_files(perform_fft, files, 'analyzed/fft', fraction=1.0, vertical=True)
-    accume = accumulate_csv_data(glob('analyzed/fft/horizontal/*'), 'analyzed/horizontal_fft_accume.csv')
-    #with open('analyzed/vertical_fft_accum.csv', 'wb') as fp:
-    #    writer = csv.writer(fp)
-    #    writer.writerow(accume)
+    analyze_files(perform_fft, files, 'analyzed/fft', fraction=1.0, vertical=True)
+    oreintation = 'horizontal'
+    accume = accumulate_csv_data(files, 'analyzed/{}_fft_accume.csv'.format(oreintation))
+    with open('analyzed/{}_fft_accume.csv'.format(oreintation), 'wb') as fp:
+        writer = csv.writer(fp)
+        writer.writerow(accume)
     plt.plot(accume)
     plt.show()
