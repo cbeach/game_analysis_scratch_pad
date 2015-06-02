@@ -2,6 +2,7 @@ from collections import Counter
 import sys
 import time
 
+from matplotlib import pyplot as plt
 from termcolor import cprint
 import cv2
 import numpy as np
@@ -145,31 +146,54 @@ def get_uniform_areas(image):
     return zip(color_groups, bounding_boxes)
 
 
-def get_pallette(image):
-    pallette = []
-    for row in frame:
+def get_palette(image, as_counter=False):
+    palette = []
+    for row in image:
         for pixel in row:
-            pallette.append((pixel[0], pixel[1], pixel[2]))
-    return list(set(pallette))
+            palette.append((pixel[0], pixel[1], pixel[2]))
+
+    if as_counter is False:
+        return list(set(palette))
+    if as_counter is True:
+        return Counter(palette)
 
 
 if __name__ == '__main__':
-    sprite_sheet = cv2.imread('sprites/mario_fixed_pallette.png', cv2.IMREAD_UNCHANGED)
-    sprites = get_sprites(sprite_sheet)
+    template_dirs = ['sprites/mario', 'sprites/tiles', 'sprites/entities',
+    template = cv2.imread('sprites/mario/small_jump.png')
+    template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+    src_frame = cv2.imread('data/625.png', cv2.IMREAD_COLOR)
+    src_frame = cv2.cvtColor(src_frame, cv2.COLOR_BGR2GRAY)
 
-    frame = cv2.imread('data/625.png', cv2.IMREAD_COLOR)
-    areas = get_uniform_areas(frame)
+
+
+    methods = [cv2.TM_CCOEFF, cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR,
+               cv2.TM_CCORR_NORMED, cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]
 
     cv2.namedWindow("Display", cv2.CV_WINDOW_AUTOSIZE)
-    for cg, bb in areas:
-        rect_frame = np.array(frame, copy=True)
-        cv2.rectangle(rect_frame, (bb['y1'], bb['x1']), (bb['y2'], bb['x2']), (0, 0, 0))
-        cv2.imshow("Display", rect_frame)
-        time.sleep(.5)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+    w, h = template.shape[::-1]
+    for method in methods:
+        frame = src_frame.copy()
+        frame2 = frame.copy()
+        res = cv2.matchTemplate(frame, template, method)
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+        if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
+                top_left = min_loc
+        else:
+            top_left = max_loc
+        bottom_right = (top_left[0] + w, top_left[1] + h)
+        cv2.rectangle(frame, top_left, bottom_right, 255, 2)
 
-    #for v, c in Counter(pallette).items():
+        plt.subplot(121), plt.imshow(res, cmap='gray')
+        plt.title('Matching Result'), plt.xticks([]), plt.yticks([])
+        plt.subplot(122), plt.imshow(frame, cmap='gray')
+        plt.title('Detected Point'), plt.xticks([]), plt.yticks([])
+        plt.suptitle(method)
+
+        plt.show()
+
+
+    #for v, c in Counter(palette).items():
     #    print('{}: {}'.format(v, c))
 
     #image = cv2.imread('mario-luigi-cropped.png')
