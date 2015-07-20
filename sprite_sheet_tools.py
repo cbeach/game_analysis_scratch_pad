@@ -1,7 +1,9 @@
-from glob import glob
 from collections import Counter
+from glob import glob
+import os
+from os.path import join, basename
+import random
 import sys
-import time
 
 from matplotlib import pyplot as plt
 from termcolor import cprint
@@ -137,8 +139,7 @@ def calc_bounding_boxes(sprites):
     return boxes
 
 
-def get_sprites(sprite_sheet):
-
+def cut_sprite_sheet(sprite_sheet):
     sprite_pixel_groups = get_alpha_groups(sprite_sheet)
     bounding_boxes = calc_bounding_boxes(sprite_pixel_groups)
 
@@ -156,10 +157,19 @@ def get_uniform_areas(image):
 
 
 def get_palette(image, as_counter=False):
+    if len(image.shape) == 2:
+        height, width = image.shape
+    elif len(image.shape) == 3:
+        height, width, depth = image.shape
+    else:
+        raise ValueError(('Image array has incorrect dimensionality. Image shape has {} '
+                         'dimensions, but must have either 2 or 3.').format(len(image.shape)))
+
     palette = []
     for row in image:
         for pixel in row:
-            palette.append((pixel[0], pixel[1], pixel[2]))
+            if pixel.shape == (3, ) or pixel.shape == (4, ):
+                palette.append(tuple(pixel))
 
     if as_counter is False:
         return list(set(palette))
@@ -167,51 +177,48 @@ def get_palette(image, as_counter=False):
         return Counter(palette)
 
 
+def image_palette(image):
+    palette = get_palette(image, as_counter=True)
+    palette = sorted(palette.items(), key=lambda a: a[1], reverse=True)
+    palette = {color[0]: number for number, color in enumerate(palette)}
+    return palette
+
+
+def get_sprites(sprite_dir):
+    sprites = {}
+    for root, dirs, files in os.walk(sprite_dir):
+        for fn in files:
+            sprite_name = fn.split('.')[0]
+            sprites[sprite_name] = cv2.imread(os.path.join(root, fn), cv2.IMREAD_UNCHANGED)
+    return sprites
+
+
 if __name__ == '__main__':
-    templates = {
-        'mario': [
-            cv2.imread('sprites/mario/small_jump.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/mario/small_standing.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/mario/small_run_1.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/mario/small_run_2.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/mario/small_run_3.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/mario/big_standing.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-        ],
-        'tile': [
-            cv2.imread('sprites/tiles/ground.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/tiles/block.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/tiles/qblock_spent.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/tiles/bricks.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/tiles/qblock_3.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/tiles/qblock_1.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/tiles/qblock_2.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-        ],
-        'entities': [
-            cv2.imread('sprites/entities/mushroom.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/entities/goomba_1.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-            cv2.imread('sprites/entities/goomba_2.png', cv2.CV_LOAD_IMAGE_GRAYSCALE),
-        ],
-    }
+    templates = get_sprites('sprites')
+    files = glob('data/*')
 
-    color_frame = cv2.imread('data/625.png', cv2.IMREAD_COLOR)
-    gray_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2GRAY)
+    accume = 0
+    for fn in random.sample(files, 10):
+        color_frame = cv2.imread(fn, cv2.IMREAD_COLOR)
+        gray_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2GRAY)
 
-    frame = gray_frame.copy()
-    frame2 = gray_frame.copy()
+        frame = gray_frame.copy()
+        frame2 = gray_frame.copy()
 
-    template_wad = []
-    template_wad.extend(templates['mario'])
-    template_wad.extend(templates['tile'])
-    template_wad.extend(templates['entities'])
+        for template in templates.values():
+            res = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
 
-    for template in template_wad:
-        res = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
+            threshold = 0.99
+            loc = np.where(res >= threshold)
+            w, h = template.shape
+            for pt in zip(*loc[::-1]):
+                cv2.rectangle(color_frame, pt, (pt[0] + w, pt[1] + h), (0, 0, 255), 2)
+            cv2.imwrite(join('/home/mcsmash/dev/emulators/analyzed/template_search', basename(fn)),
+                color_frame)
+        accume += 1
+        cprint('Files processed: {}'.format(accume))
 
-        threshold = 0.99
-        loc = np.where(res >= threshold)
-        w, h = templates['tile'][0].shape
-        for pt in zip(*loc[::-1]):
-            cv2.rectangle(color_frame, pt, (pt[0] + w, pt[1] + h), (0, 0, 255), 2)
+    sys.exit()
 
     plt.subplot(121), plt.imshow(res, cmap='gray')
     plt.title('Matching Result'), plt.xticks([]), plt.yticks([])
@@ -220,12 +227,3 @@ if __name__ == '__main__':
     plt.suptitle('tiles')
 
     plt.show()
-
-    #for v, c in Counter(palette).items():
-    #    print('{}: {}'.format(v, c))
-
-    #image = cv2.imread('mario-luigi-cropped.png')
-    #for s in sprites:
-    #    cv2.namedWindow("Display", cv2.CV_WINDOW_AUTOSIZE)
-    #    cv2.imshow("Display", image)
-    #    cv2.waitKey(0)
