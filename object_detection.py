@@ -88,12 +88,38 @@ def index_sprite(sprite):
     return index
 
 
+def match_pixel(a, b):
+    if len(a.shape) >= 3 and a[3] == 0:
+        return True
+    elif len(b.shape) >= 3 and b[3] == 0:
+        return True
+    elif a[0] == b[0] and a[1] == b[1] and a[2] == b[2]:
+        return True
+    else:
+        return False
+
+
 def match_sprites(image, position, sprites, possible_matches, indexed):
     for pm in possible_matches:
-        current_sprite = sprites[pm]
-        first_pixel_color = indexed[pm]['first_pixel']['color']
-        first_pixel_position = indexed[pm]['first_pixel']['position']
-        image_slice = image[
+        match = True
+        sprite = sprites[pm]
+        color = indexed[pm]['first_pixel']['color']
+        offset = indexed[pm]['first_pixel']['position']
+        image_slice = image[position[0] - offset[0]:position[0] + sprite.shape[0] + 1,
+                            position[1] - offset[1]:position[1] + sprite.shape[1] + 1]
+        for i, row in enumerate(image_slice):
+            for j, pixel in enumerate(row):
+                try:
+                    if match_pixel(pixel, sprite[i][j]) is False:
+                        match = False
+                        break
+                except IndexError:
+                    break
+            if match is False:
+                break
+
+        if match is True:
+            return pm
 
     return False
 
@@ -110,7 +136,9 @@ def naive_find_sprite(image, sprites, indexed):
         for j, p in enumerate(row):
             pixel_tuple = tuple(p[:3])
             if pixel_tuple in first_pixels:
-                match_sprites(image, (i, j), sprites, first_pixels[pixel_tuple], indexed)
+                match = match_sprites(image, (i, j), sprites, first_pixels[pixel_tuple], indexed)
+                if match is not False:
+                    print(match)
 
 
 if __name__ == '__main__':
@@ -122,7 +150,7 @@ if __name__ == '__main__':
     # sprite_wavelets = {k: get_wavelets(v) for k, v in sprites.items()}
 
     accume = 0
-    image = reduce_image(cv2.imread('data/476.png', cv2.IMREAD_COLOR))
+    image = reduce_image(cv2.imread('data/1228.png', cv2.IMREAD_COLOR))
     naive_find_sprite(image, sprites, indexed)
     sys.exit()
 
