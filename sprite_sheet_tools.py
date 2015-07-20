@@ -220,12 +220,3 @@ if __name__ == '__main__':
     plt.suptitle('tiles')
 
     plt.show()
-
-    #for v, c in Counter(palette).items():
-    #    print('{}: {}'.format(v, c))
-
-    #image = cv2.imread('mario-luigi-cropped.png')
-    #for s in sprites:
-    #    cv2.namedWindow("Display", cv2.CV_WINDOW_AUTOSIZE)
-    #    cv2.imshow("Display", image)
-    #    cv2.waitKey(0)
