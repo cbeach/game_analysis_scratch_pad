@@ -10,6 +10,12 @@ from termcolor import cprint
 from sprite_sheet_tools import image_palette, get_sprites
 
 
+def show_image(image):
+    cv2.imshow('image', image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
 def BGR_to_palette(image, palette=None):
     if palette is None:
         palette = image_palette(image)
@@ -21,6 +27,13 @@ def BGR_to_palette(image, palette=None):
 
 
 def get_wavelets(image, palette=None, wavelet_height=4, wavelet_width=4):
+    if image.shape[0] % wavelet_height != 0:
+        remainder = image.shape[0] % wavelet_height
+        image = image[:-remainder]
+    if image.shape[1] % wavelet_width != 0:
+        remainder = image.shape[1] % wavelet_height
+        image = image[:, :-remainder]
+
     if len(image.shape) == 2:
         height, width = image.shape
     elif len(image.shape) == 3:
@@ -36,12 +49,12 @@ def get_wavelets(image, palette=None, wavelet_height=4, wavelet_width=4):
         # TODO: Change this in the emulator!
         # A single pixel in the Nintendo is action a 2x2 pixel area in the
         # image. I'm consolidating the 4x4 ROI into a 2x2 ROI for efficiency.
-        temp = [np.split(quad[i], width / wavelet_width) for i in range(4)]
+        temp = [np.split(i, width / wavelet_width) for i in quad]
         column = []
         for j in range(len(temp[0])):
             column.append(np.array([
-                temp[0][j][0], temp[2][j][0],
-                temp[0][j][2], temp[2][j][2],
+                temp[0][j][0], temp[1][j][0],
+                temp[0][j][1], temp[1][j][1],
             ]))
         wavelets.append(column)
 
@@ -89,17 +102,35 @@ def index_sprite(sprite):
 
 
 def match_pixel(a, b):
-    if len(a.shape) >= 3 and a[3] == 0:
-        return True
-    elif len(b.shape) >= 3 and b[3] == 0:
-        return True
-    elif a[0] == b[0] and a[1] == b[1] and a[2] == b[2]:
-        return True
-    else:
-        return False
+    if len(a) == 4:
+        if a[3] == 0 and np.array_equal(a[:3], b):
+            return True
+    elif len(b) == 4:
+        if b[3] == 0 and np.array_equal(a, b[:3]):
+            return True
+    return False
+
+
+def trim_transparent(row):
+    return row[first_non_transparent_pixel_pos(row):last_non_transparent_pixel_pos(row)]
+
+
+def first_non_transparent_pixel_pos(row):
+    for i in range(len(row)):
+        if row[i][3] != 0:
+            return i
+
+
+def last_non_transparent_pixel_pos(row):
+    if row[-1][3] != 0:
+        return None
+    for i in range(1, len(row)):
+        if row[-i][3] != 0:
+            return -i + 1
 
 
 def match_sprites(image, position, sprites, possible_matches, indexed):
+    counter = 0
     for pm in possible_matches:
         match = True
         sprite = sprites[pm]
@@ -107,6 +138,14 @@ def match_sprites(image, position, sprites, possible_matches, indexed):
         offset = indexed[pm]['first_pixel']['position']
         image_slice = image[position[0] - offset[0]:position[0] + sprite.shape[0] + 1,
                             position[1] - offset[1]:position[1] + sprite.shape[1] + 1]
+        print(position)
+        print(offset)
+        print(position[0] - offset[0], position[0] + sprite.shape[0] + 1)
+        print(position[1] - offset[1], position[1] + sprite.shape[1] + 1)
+        print
+        cv2.imwrite('analyzed/segmented/{}.png'.format(counter), image_slice)
+        counter += 1
+
         for i, row in enumerate(image_slice):
             for j, pixel in enumerate(row):
                 try:
@@ -120,7 +159,6 @@ def match_sprites(image, position, sprites, possible_matches, indexed):
 
         if match is True:
             return pm
-
     return False
 
 
@@ -132,26 +170,41 @@ def naive_find_sprite(image, sprites, indexed):
         else:
             first_pixels[v['first_pixel']['color']] = [k]
 
+    matches = defaultdict(list)
     for i, row in enumerate(image):
         for j, p in enumerate(row):
             pixel_tuple = tuple(p[:3])
             if pixel_tuple in first_pixels:
                 match = match_sprites(image, (i, j), sprites, first_pixels[pixel_tuple], indexed)
                 if match is not False:
-                    print(match)
+                    matches[match].append((i, j))
+    return matches
+
+
+def break_image_by_color(image):
+    pass
 
 
 if __name__ == '__main__':
     file_names = glob('data/*')
     sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
+    sprites = {
+        'small_jump': sprites['small_jump'],
+        'goomba_1': sprites['goomba_1'],
+    }
+
     indexed = {}
     for k in sprites.keys():
+        get_wavelets(sprites[k], None, 2, 2)
         indexed[k] = index_sprite(sprites[k])
     # sprite_wavelets = {k: get_wavelets(v) for k, v in sprites.items()}
 
     accume = 0
-    image = reduce_image(cv2.imread('data/1228.png', cv2.IMREAD_COLOR))
-    naive_find_sprite(image, sprites, indexed)
+    image = reduce_image(cv2.imread('data/test/test_image.png', cv2.IMREAD_COLOR))
+    # image = reduce_image(cv2.imread('data/1228.png', cv2.IMREAD_COLOR))
+    locations = naive_find_sprite(image, sprites, indexed)
+    for l in locations['goomba_1']:
+        image[l[0]][l[1]] = np.array([0, 0, 255])
     sys.exit()
 
     for fn in random.sample(file_names, 100):
