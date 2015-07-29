@@ -86,12 +86,12 @@ def get_background_color(image):
 def index_sprite(sprite):
     index = {}
     # First non-transparent pixel
-    b, g, r, a = cv2.split(sprite)
-    for i, row in enumerate(sprite):
-        for j, pixel in enumerate(row):
-            if pixel[3] > 0:
+    blue, green, red, alpha = cv2.split(sprite)
+    for i, row in enumerate(alpha):
+        for j, a in enumerate(row):
+            if a > 0:
                 index['first_pixel'] = {
-                    'color': tuple(pixel[:3]),
+                    'color': tuple(sprite[i][j][:3]),
                     'position': (i, j)
                 }
                 break
@@ -103,10 +103,10 @@ def index_sprite(sprite):
 
 def match_pixel(a, b):
     if len(a) == 4:
-        if a[3] == 0 and np.array_equal(a[:3], b):
+        if a[3] == 0 or np.array_equal(a[:3], b):
             return True
     elif len(b) == 4:
-        if b[3] == 0 and np.array_equal(a, b[:3]):
+        if b[3] == 0 or np.array_equal(a, b[:3]):
             return True
     return False
 
@@ -130,36 +130,59 @@ def last_non_transparent_pixel_pos(row):
 
 
 def match_sprites(image, position, sprites, possible_matches, indexed):
-    counter = 0
     for pm in possible_matches:
         match = True
         sprite = sprites[pm]
-        color = indexed[pm]['first_pixel']['color']
-        offset = indexed[pm]['first_pixel']['position']
-        image_slice = image[position[0] - offset[0]:position[0] + sprite.shape[0] + 1,
-                            position[1] - offset[1]:position[1] + sprite.shape[1] + 1]
-        print(position)
-        print(offset)
-        print(position[0] - offset[0], position[0] + sprite.shape[0] + 1)
-        print(position[1] - offset[1], position[1] + sprite.shape[1] + 1)
-        print
-        cv2.imwrite('analyzed/segmented/{}.png'.format(counter), image_slice)
-        counter += 1
+        # The offset of x and y
+        x_o, y_o = indexed[pm]['first_pixel']['position']
 
-        for i, row in enumerate(image_slice):
-            for j, pixel in enumerate(row):
-                try:
-                    if match_pixel(pixel, sprite[i][j]) is False:
-                        match = False
-                        break
-                except IndexError:
-                    break
-            if match is False:
-                break
+        # The size of the image
+        x_si, y_si = image.shape[:2]
+        # The size of the sprite
+        x_ss, y_ss = sprite.shape[:2]
 
+        a = position[0] - x_o if position[0] - x_o >= 0 else 0
+        b = (position[0] - x_o) + x_ss + 1 if (position[0] - x_o) + x_ss + 1 < x_si else None
+        c = position[1] - y_o if position[1] - y_o >= 0 else 0
+        d = (position[1] - y_o) + y_ss + 1 if (position[1] - y_o) + y_ss + 1 < y_si else None
+
+        offset_pos_x = a
+        offset_pos_y = c
+
+        # Slice the image down to the size of the current sprite so it's more
+        # manageable
+        image_slice = image[a:b, c:d]
+
+        sprite_slice = sprite[:, :]
+        if position[0] < x_o:
+            a = abs(position[0] - x_o)
+            sprite_slice = sprite_slice[a:]
+
+        if position[1] < y_o:
+            c = abs(position[1] - y_o)
+            sprite_slice = sprite_slice[:, c:]
+
+        match = match_sprite_by_pixel(image_slice, sprite_slice, (offset_pos_x, offset_pos_y))
         if match is True:
-            return pm
+            return {
+                pm: (offset_pos_x, offset_pos_y),
+            }
     return False
+
+
+def match_sprite_by_pixel(image_slice, sprite_slice):
+    for i, row in enumerate(image_slice):
+        for j, pixel in enumerate(row):
+            try:
+                if match_pixel(pixel, sprite_slice[i][j]) is False:
+                    return False
+            except IndexError:
+                break
+    return True
+
+
+def match_sprite_by_run(image_slice, sprite_run):
+    image_run = reduce_by_run(image)
 
 
 def naive_find_sprite(image, sprites, indexed):
@@ -170,41 +193,106 @@ def naive_find_sprite(image, sprites, indexed):
         else:
             first_pixels[v['first_pixel']['color']] = [k]
 
-    matches = defaultdict(list)
+    matches = []
     for i, row in enumerate(image):
         for j, p in enumerate(row):
             pixel_tuple = tuple(p[:3])
             if pixel_tuple in first_pixels:
                 match = match_sprites(image, (i, j), sprites, first_pixels[pixel_tuple], indexed)
                 if match is not False:
-                    matches[match].append((i, j))
+                    matches.append(match)
     return matches
 
 
 def break_image_by_color(image):
-    pass
+    h, w = image.shape[:2]
+    img = image.copy()
+    master_mask = np.zeros((h + 2, w + 2), np.uint8)
+    ret_val = {}
+    counter = 0
+    for i, row in enumerate(image):
+        # if not first row slice row according to
+        for j, pixel in enumerate(image):
+            if master_mask[i][j] > 0:
+                continue
+            else:
+                temp_mask = np.zeros((h + 2, w + 2), np.uint8)
+                cv2.floodFill(img, temp_mask, (j, i), (255, 0, 0))
+                master_mask = np.logical_or(master_mask, temp_mask)
+                cv2.imwrite('analyzed/temp/{}.png'.format(counter), np.multiply(master_mask, 255))
+                counter += 1
+            # element wise or with master mask
+            # get bounding box for flooded area
+            # slice image and mask per bounding box
+            # store slices in return dictionary
+            pass
+
+
+def reduce_by_run(image):
+    runs = []
+    color = None
+    count = 0
+    transparency = len(image.shape) == 3 and image.shape[-1] == 4
+    transparent = False
+
+    for i, row in enumerate(image):
+        color = tuple(image[i][0])
+        runs.append([])
+        for j, pixel in enumerate(row):
+            pixel_tuple = tuple(pixel[:3])
+            if transparency and pixel[3] == 0:
+                transparent = True
+
+            if color == pixel_tuple:
+                count += 1
+            else:
+                runs[i].append({
+                    'color': color,
+                    'count': count,
+                    'transparent': transparent,
+                })
+                count = 1
+                color = pixel_tuple
+        runs[i].append({
+            'color': color,
+            'count': count,
+            'transparent': transparent,
+        })
+        count = 0
+    return runs
+
+
+def test_runs(image):
+    runs = reduce_by_run(image)
+    restored_image = np.zeros_like(image)
+    x = 0
+    y = 0
+    for i, row in enumerate(runs):
+        x = i
+        y = 0
+        for j, run in enumerate(row):
+            b, g, r = run['color']
+            for k in range(run['count']):
+                restored_image[x][y][0] = b
+                restored_image[x][y][1] = g
+                restored_image[x][y][2] = r
+                y += 1
 
 
 if __name__ == '__main__':
     file_names = glob('data/*')
     sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
-    sprites = {
-        'small_jump': sprites['small_jump'],
-        'goomba_1': sprites['goomba_1'],
-    }
 
     indexed = {}
     for k in sprites.keys():
-        get_wavelets(sprites[k], None, 2, 2)
         indexed[k] = index_sprite(sprites[k])
     # sprite_wavelets = {k: get_wavelets(v) for k, v in sprites.items()}
 
     accume = 0
-    image = reduce_image(cv2.imread('data/test/test_image.png', cv2.IMREAD_COLOR))
-    # image = reduce_image(cv2.imread('data/1228.png', cv2.IMREAD_COLOR))
+    # image = reduce_image(cv2.imread('data/test/test_image.png', cv2.IMREAD_COLOR))
+    image = reduce_image(cv2.imread('data/457.png', cv2.IMREAD_COLOR))
+
     locations = naive_find_sprite(image, sprites, indexed)
-    for l in locations['goomba_1']:
-        image[l[0]][l[1]] = np.array([0, 0, 255])
     sys.exit()
 
     for fn in random.sample(file_names, 100):
