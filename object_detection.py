@@ -1,11 +1,10 @@
 from collections import defaultdict
 from glob import glob
-import random
 import sys
 
 import cv2
 import numpy as np
-from termcolor import cprint
+from termcolor import colored, cprint
 
 from sprite_sheet_tools import image_palette, get_sprites
 
@@ -177,17 +176,12 @@ def match_sprite_by_pixel(image_slice, sprite_slice):
     return True
 
 
-def match_sprite_by_run(image_slice, sprite_run):
-    image_run = reduce_by_run(image)
-
-
 def naive_find_sprite(image, sprites, indexed):
     """
         Profile:
             9522
             8582: Optimized match pixel
     """
-    mask = np.ones(image.shape[:2])
     first_pixels = {}
     for k, v in indexed.items():
         if v['first_pixel']['color'] in first_pixels:
@@ -209,31 +203,32 @@ def naive_find_sprite(image, sprites, indexed):
 def find_sprites_by_run(image, sprites):
     run_count, run_colors = np_reduce_by_run(image)
 
-    sprite_runs = {}
-    sprite_colors = {}
-    sprite_transparency = {}
-    first_runs = {}
+    sprite_runs = defaultdict(dict)
+    first_runs = defaultdict(lambda: defaultdict(list))
     for name, sprite in sprites.items():
-        runs, colors, transparent = np_reduce_by_run(sprites[name], transparency=True)
-        sprite_runs[name] = runs
-        sprite_colors[name] = colors
-        sprite_transparency[name] = transparent
+        runs, colors, transparent = np_reduce_by_run(sprite, transparency=True)
+        sprite_runs[name]['runs'] = runs
+        sprite_runs[name]['colors'] = colors
+        sprite_runs[name]['trans'] = transparent
 
-        temp = np.nonzero(transparent)
-        first_runs[name] = {
-            'count': runs[temp[0][0]][temp[1][0]],
-            'color': colors[temp[0][0]][temp[1][0]],
-        }
+        count, color = first_non_transparent_run(runs, colors, transparent)
+        first_runs[count][tuple(color[:3])].append(name)
 
-    for name, sprite in sprites.items():
-        found = np.nonzero(np.where(run_count == 3, run_count, 0))
+    for count, colors in first_runs.items():
+        np.nonzero(np.where(run_count == count, run_count, 0))
+
+
+def first_non_transparent_run(image_runs, image_colors, image_transparency):
+    first = np.nonzero(image_transparency)
+    x = first[0][0]
+    y = first[1][0]
+    return image_runs[x][y], image_colors[x][y]
 
 
 def break_image_by_color(image):
     h, w = image.shape[:2]
     img = image.copy()
     master_mask = np.zeros((h + 2, w + 2), np.uint8)
-    ret_val = {}
     counter = 0
     for i, row in enumerate(image):
         # if not first row slice row according to
@@ -304,12 +299,14 @@ def np_reduce_by_run(image, transparency=False):
                 runs[i][run_y] = count
                 colors[i][run_y] = color
                 if transparency is True and color[-1] != 0:
-                    transparent[i][j] = 1
+                    transparent[i][run_y] = 1
                 run_y += 1
                 count = 1
                 color = pixel
         runs[i][run_y] = count
         colors[i][run_y] = color
+        if transparency is True and color[-1] != 0:
+            transparent[i][run_y] = 1
         count = 0
 
     if transparency is True:
@@ -339,28 +336,19 @@ if __name__ == '__main__':
     file_names = glob('data/*')
     sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
     sprite_runs = {k: np_reduce_by_run(v) for k, v in sprites.items()}
-    sprites = {
-        'small_jump': sprites['small_jump'],
-        'goomba_1': sprites['goomba_1'],
-    }
+    #sprites = {
+    #    'small_jump': sprites['small_jump'],
+    #    'goomba_1': sprites['goomba_1'],
+    #}
 
-    image = reduce_image(cv2.imread('data/1228.png', cv2.IMREAD_COLOR))
-    find_sprites_by_run(image, sprites)
-    sys.exit()
-
-    indexed = {}
-    for k in sprites.keys():
-        indexed[k] = index_sprite(sprites[k])
+    #indexed = {}
+    #for k in sprites.keys():
+    #    indexed[k] = index_sprite(sprites[k])
 
     accume = 0
-    for fn in range(len(file_names))[1224:1225]:
+    for fn in range(len(file_names))[1224:1234]:
         fn = 'data/{}.png'.format(fn)
         image = reduce_image(cv2.imread(fn, cv2.IMREAD_COLOR))
-        run_count, run_colors = np_reduce_by_run(image)
-        continue
-        locations = naive_find_sprite(image, sprites, indexed)
+        find_sprites_by_run(image, sprites)
 
-        accume += 1
-        cprint(fn, 'cyan')
-        cprint(accume, 'blue')
-        print
+        cprint('{}: {}'.format(accume, fn), 'cyan')
