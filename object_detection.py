@@ -67,10 +67,6 @@ def get_wavelets(image, palette=None, wavelet_height=4, wavelet_width=4):
     return wavelet_dict
 
 
-def sprite_wavelets(image):
-    pass
-
-
 def reduce_image(image):
     return image[::2, ::2]
 
@@ -102,13 +98,13 @@ def index_sprite(sprite):
 
 
 def match_pixel(a, b):
-    if len(a) == 4:
-        if a[3] == 0 or np.array_equal(a[:3], b):
-            return True
-    elif len(b) == 4:
-        if b[3] == 0 or np.array_equal(a, b[:3]):
-            return True
-    return False
+    """
+        b should always be the transparrent pixel
+    """
+    if b[3] == 0:
+        return True
+    else:
+        return np.array_equal(a, b[:3])
 
 
 def trim_transparent(row):
@@ -162,7 +158,7 @@ def match_sprites(image, position, sprites, possible_matches, indexed):
             c = abs(position[1] - y_o)
             sprite_slice = sprite_slice[:, c:]
 
-        match = match_sprite_by_pixel(image_slice, sprite_slice, (offset_pos_x, offset_pos_y))
+        match = match_sprite_by_pixel(image_slice, sprite_slice)
         if match is True:
             return {
                 pm: (offset_pos_x, offset_pos_y),
@@ -186,6 +182,12 @@ def match_sprite_by_run(image_slice, sprite_run):
 
 
 def naive_find_sprite(image, sprites, indexed):
+    """
+        Profile:
+            9522
+            8582: Optimized match pixel
+    """
+    mask = np.ones(image.shape[:2])
     first_pixels = {}
     for k, v in indexed.items():
         if v['first_pixel']['color'] in first_pixels:
@@ -202,6 +204,29 @@ def naive_find_sprite(image, sprites, indexed):
                 if match is not False:
                     matches.append(match)
     return matches
+
+
+def find_sprites_by_run(image, sprites):
+    run_count, run_colors = np_reduce_by_run(image)
+
+    sprite_runs = {}
+    sprite_colors = {}
+    sprite_transparency = {}
+    first_runs = {}
+    for name, sprite in sprites.items():
+        runs, colors, transparent = np_reduce_by_run(sprites[name], transparency=True)
+        sprite_runs[name] = runs
+        sprite_colors[name] = colors
+        sprite_transparency[name] = transparent
+
+        temp = np.nonzero(transparent)
+        first_runs[name] = {
+            'count': runs[temp[0][0]][temp[1][0]],
+            'color': colors[temp[0][0]][temp[1][0]],
+        }
+
+    for name, sprite in sprites.items():
+        found = np.nonzero(np.where(run_count == 3, run_count, 0))
 
 
 def break_image_by_color(image):
@@ -262,6 +287,37 @@ def reduce_by_run(image):
     return runs
 
 
+def np_reduce_by_run(image, transparency=False):
+    runs = np.zeros(image.shape[:2])
+    colors = np.zeros(image.shape)
+    if transparency is True:
+        transparent = np.zeros(image.shape[:2])
+
+    count = 0
+    for i, row in enumerate(image):
+        color = image[i][0]
+        run_y = 0
+        for j, pixel in enumerate(row):
+            if np.array_equal(color[:3], pixel[:3]):
+                count += 1
+            else:
+                runs[i][run_y] = count
+                colors[i][run_y] = color
+                if transparency is True and color[-1] != 0:
+                    transparent[i][j] = 1
+                run_y += 1
+                count = 1
+                color = pixel
+        runs[i][run_y] = count
+        colors[i][run_y] = color
+        count = 0
+
+    if transparency is True:
+        return runs, colors, transparent
+    else:
+        return runs, colors
+
+
 def test_runs(image):
     runs = reduce_by_run(image)
     restored_image = np.zeros_like(image)
@@ -282,34 +338,29 @@ def test_runs(image):
 if __name__ == '__main__':
     file_names = glob('data/*')
     sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
+    sprite_runs = {k: np_reduce_by_run(v) for k, v in sprites.items()}
+    sprites = {
+        'small_jump': sprites['small_jump'],
+        'goomba_1': sprites['goomba_1'],
+    }
+
+    image = reduce_image(cv2.imread('data/1228.png', cv2.IMREAD_COLOR))
+    find_sprites_by_run(image, sprites)
+    sys.exit()
 
     indexed = {}
     for k in sprites.keys():
         indexed[k] = index_sprite(sprites[k])
-    # sprite_wavelets = {k: get_wavelets(v) for k, v in sprites.items()}
 
     accume = 0
-    # image = reduce_image(cv2.imread('data/test/test_image.png', cv2.IMREAD_COLOR))
-    image = reduce_image(cv2.imread('data/457.png', cv2.IMREAD_COLOR))
-
-    locations = naive_find_sprite(image, sprites, indexed)
-    sys.exit()
-
-    for fn in random.sample(file_names, 100):
+    for fn in range(len(file_names))[1224:1225]:
+        fn = 'data/{}.png'.format(fn)
         image = reduce_image(cv2.imread(fn, cv2.IMREAD_COLOR))
-        naive_find_sprite(image, sprites, indexed)
+        run_count, run_colors = np_reduce_by_run(image)
+        continue
+        locations = naive_find_sprite(image, sprites, indexed)
 
-        #int_image = image.astype(int)
-        #b, g, r = cv2.split(int_image)
-        #nbins = 256
-        #b = np.left_shift(b, 16)
-        #g = np.left_shift(g, 8)
-        #as_ints = np.add(np.add(b, g), r)
-        #counts = np.bincount(as_ints.flatten())
-        #counts = map(lambda i: '{0:x}'.format(i), counts.nonzero()[0])
-        #palette = map(byte_array_to_int, image_palette(image).keys())
-        #palette = map(lambda i: '{0:x}'.format(i), palette)
-
-        # p_sprites = palettize_sprites(sprites, palette)
-        # wavelets = get_wavelets(image)
         accume += 1
+        cprint(fn, 'cyan')
+        cprint(accume, 'blue')
+        print
