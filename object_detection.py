@@ -1,10 +1,10 @@
-from collections import defaultdict
+from collections import defaultdict, Counter
 from glob import glob
 import sys
 
 import cv2
 import numpy as np
-from termcolor import colored, cprint
+from termcolor import cprint
 
 from sprite_sheet_tools import image_palette, get_sprites
 
@@ -176,12 +176,16 @@ def match_sprite_by_pixel(image_slice, sprite_slice):
     return True
 
 
+def match_sprite_by_run(image_runs, image_colors, sprite_runs, sprite_colors, sprite_transparency):
+    for x, row in enumerate(sprite_transparency):
+        for y, element in enumerate(row):
+            if image_runs[x][y] != sprite_runs[x][y] or (element != 0 and
+            match_pixel(image_colors[x][y], sprite_colors[x][y]) is False):
+                return False
+    return True
+
+
 def naive_find_sprite(image, sprites, indexed):
-    """
-        Profile:
-            9522
-            8582: Optimized match pixel
-    """
     first_pixels = {}
     for k, v in indexed.items():
         if v['first_pixel']['color'] in first_pixels:
@@ -200,29 +204,199 @@ def naive_find_sprite(image, sprites, indexed):
     return matches
 
 
-def find_sprites_by_run(image, sprites):
-    run_count, run_colors = np_reduce_by_run(image)
+def slice_image_and_sprite(image, position, sprite, offset):
+    # The offset of x and y
+    x_o, y_o = offset
+    if y_o == 0:
+        return image[position[0]:position[0] + sprite.shape[0],
+                     position[1]:position[1] + sprite.shape[1]], sprite
+
+    # The size of the image
+    x_si, y_si = image.shape[:2]
+    # The size of the sprite
+    x_ss, y_ss = sprite.shape[:2]
+
+    a = position[0] - x_o if position[0] - x_o >= 0 else 0
+    b = (position[0] - x_o) + x_ss if (position[0] - x_o) + x_ss + 1 < x_si else None
+    c = position[1] - y_o if position[1] - y_o >= 0 else 0
+    d = (position[1] - y_o) + y_ss if (position[1] - y_o) + y_ss + 1 < y_si else None
+
+    sliced_image = image[a:b, c:d]
+    sprite_slice = sprite[:, :]
+    if position[0] < x_o:
+        a = abs(position[0] - x_o)
+        sprite_slice = sprite_slice[a:]
+
+    if position[1] < y_o:
+        c = abs(position[1] - y_o)
+        sprite_slice = sprite_slice[:, c:]
+
+    return sliced_image, sprite_slice
+
+
+def accumulate_image(image_runs):
+    accum = np.zeros((image_runs.shape[0],), dtype='int32')
+    image_runs = np.array(image_runs, dtype='int32')
+    ret_val = []
+    for row in image_runs.T:
+        accum = np.add(accum, row)
+        ret_val.append(accum)
+    ret_val = np.array(ret_val)
+    return ret_val.T
+
+
+def hash_pixel(pixel):
+    return (int(pixel[0]) << 24) + (int(pixel[1]) << 16) + (int(pixel[2]) << 8)
+
+
+def hash_colors(colors):
+    b = np.left_shift(colors[:, :, 0], 24)
+    g = np.left_shift(colors[:, :, 1], 16)
+    r = np.left_shift(colors[:, :, 2], 8)
+    return np.add(np.add(b, g), r)
+
+
+def runs_and_colors_to_int(runs, colors):
+    return np.add(hash_colors(colors), runs)
+
+
+def sort_sprites_by_size(sprites):
+    sprite_names = sprites.keys()
+    sprite_area = [sprites[s].shape[:2] for s in sprite_names]
+    sprite_area = map(lambda p: p[0] * p[1], sprite_area)
+    sorted_sprites = sorted(zip(sprite_names, sprite_area), key=lambda a: a[0])
+    return [s[0] for s in sorted_sprites]
+
+
+def sprite_leading_edge(runs, trans):
+    leading_offsets = []
+    for x, row in enumerate(trans):
+        nz = np.nonzero(row)
+        leading_offsets.append(int(sum(runs[x, :nz[0][0]])))
+    return leading_offsets
+
+
+def find_sprites_by_run(image, sprites, original):
+    background_color = get_background_color(image)
+    image_runs, image_colors = np_reduce_by_run(image)
+    image_runs = image_runs.astype('int64')
+    image_colors = image_colors.astype('int64')
+
+    image_accum = accumulate_image(image_runs)
+    hashed = runs_and_colors_to_int(image_runs, image_colors)
 
     sprite_runs = defaultdict(dict)
     first_runs = defaultdict(lambda: defaultdict(list))
+    hashed_first = {}
+
     for name, sprite in sprites.items():
         runs, colors, transparent = np_reduce_by_run(sprite, transparency=True)
         sprite_runs[name]['runs'] = runs
         sprite_runs[name]['colors'] = colors
         sprite_runs[name]['trans'] = transparent
 
-        count, color = first_non_transparent_run(runs, colors, transparent)
-        first_runs[count][tuple(color[:3])].append(name)
+        count, color, offset = first_non_transparent_run(runs, colors, transparent)
+        hashed_first[name] = hash_pixel(color) + count
+        first_runs[count][tuple(color[:3])].append({
+            'name': name,
+            'offset': offset,
+        })
 
-    for count, colors in first_runs.items():
-        np.nonzero(np.where(run_count == count, run_count, 0))
+    sorted_sprites = sort_sprites_by_size(sprites)
+    leading_edge = {name: sprite_leading_edge(sprite_runs[name]['runs'],
+        sprite_runs[name]['trans']) for name in sorted_sprites}
+
+    restore_image(image_runs, image_colors)
+    count = 0
+    for name, h in hashed_first.items():
+        first_runs_found = np.nonzero(np.where(hashed == h, hashed, 0))
+        for x, y in zip(*first_runs_found):
+            if count == 24:
+                optimized_match_spite(image_runs, image_colors, sprite_runs[name]['runs'],
+                                      sprite_runs[name]['colors'], x, y, leading_edge[name],
+                                      original)
+                erase_sprite_runs(image_runs, image_colors, image_accum, sprite_runs[name]['runs'],
+                                  sprite_runs[name]['colors'], sprite_runs[name]['trans'],
+                                  leading_edge[name], background_color, x, y, hashed)
+                print(x, int(sum(image_runs[x][:y])))
+                # cv2.circle(original, (int(sum(image_runs[x][:y])) * 2, x * 2), 5, (0, 255, 0))
+            count += 1
+
+
+def optimized_match_spite(image_runs, image_colors, sprite_runs, sprite_colors, x, y,
+                          leading_edge, original):
+    img_y = int(sum(image_runs[x][:y]))
+    tlc = (x, img_y - leading_edge[0])
+    for i, l in enumerate(leading_edge):
+        original[(x + i) * 2][(tlc[1]) * 2][0] = 0
+        original[(x + i) * 2][(tlc[1]) * 2][1] = 255
+        original[(x + i) * 2][(tlc[1]) * 2][2] = 0
+
+
+def erase_sprite_runs(image_runs, image_colors, image_accum, sprite_runs, sprite_colors,
+                      sprite_trans, leading_edge, bg_color, x, y, hashed_image):
+    bg_color = np.array(bg_color)
+    img_y = int(sum(image_runs[x][:y]))
+    tlc = (x, img_y - leading_edge[0])
+    for i, l in enumerate(leading_edge):
+        index = np.searchsorted(image_accum[x + i], tlc[1] - l)
+        for j in sprite_trans[i]:
+            if sprite_trans[i][j] == 0:
+                image_colors[x + i][index + j + 1][0] = bg_color[0]
+                image_colors[x + i][index + j + 1][1] = bg_color[1]
+                image_colors[x + i][index + j + 1][2] = bg_color[2]
+
+    show_image(restore_image(image_runs, image_colors))
+
+
+def old_find_sprites_by_run(first_runs, image_runs, image_colors, sprite, image, sprites, sprite_runs):
+    counter = Counter()
+    iterations = 0
+    first = sorted(first_runs.items(), key=lambda x: x[0], reverse=True)
+    for count, colors in first:
+        found_runs = np.nonzero(np.where(image_runs == count, image_runs, 0))
+        for x, y in zip(found_runs[0], found_runs[1]):
+            for c in colors.keys():
+                if c == tuple(image_colors[x][y][:3]):
+                    for sprite_data in colors[c]:
+                        iterations += 1
+                        img_y = int(sum(image_runs[x][:y]))
+                        adjusted_size = (image.shape[0] - sprite.shape[0],
+                                        image.shape[1] - sprite.shape[1])
+                        if x > adjusted_size[0] or img_y > adjusted_size[1]:
+                            continue
+
+                        sliced_image, sliced_sprite = slice_image_and_sprite(image, (x, img_y),
+                            sprites[sprite_data['name']], sprite_data['offset'])
+
+                        if 0 in sliced_image.shape:
+                            continue
+
+                        sliced_runs, sliced_colors = np_reduce_by_run(sliced_image)
+
+                        s_runs = sprite_runs[sprite_data['name']]['runs']
+                        s_colors = sprite_runs[sprite_data['name']]['colors']
+                        s_trans = sprite_runs[sprite_data['name']]['trans']
+
+                        if match_sprite_by_run(sliced_runs, sliced_colors, s_runs, s_colors,
+                                               s_trans):
+                            counter[sprite_data['name']] += 1
+                            break
+
+    print(iterations)
+    #show_image(original)
 
 
 def first_non_transparent_run(image_runs, image_colors, image_transparency):
+    sx, sy = image_runs.shape[:2]
     first = np.nonzero(image_transparency)
-    x = first[0][0]
-    y = first[1][0]
-    return image_runs[x][y], image_colors[x][y]
+    fallback = None
+    for x, y in zip(first[0], first[1]):
+        if image_runs[x][y] < sy:
+            return image_runs[x][y], image_colors[x][y], (x, sum(image_runs[x][:y]))
+        elif fallback is None:
+            fallback = (image_runs[x][y], image_colors[x][y], (x, sum(image_runs[x][:y])))
+    return fallback
 
 
 def break_image_by_color(image):
@@ -291,6 +465,7 @@ def np_reduce_by_run(image, transparency=False):
     count = 0
     for i, row in enumerate(image):
         color = image[i][0]
+
         run_y = 0
         for j, pixel in enumerate(row):
             if np.array_equal(color[:3], pixel[:3]):
@@ -315,40 +490,56 @@ def np_reduce_by_run(image, transparency=False):
         return runs, colors
 
 
-def test_runs(image):
-    runs = reduce_by_run(image)
-    restored_image = np.zeros_like(image)
+def restore_image(image_runs, image_colors):
+    restored_image = np.zeros(image_colors.shape, dtype='ubyte')
     x = 0
     y = 0
-    for i, row in enumerate(runs):
+    for i, row in enumerate(image_runs):
         x = i
         y = 0
         for j, run in enumerate(row):
-            b, g, r = run['color']
-            for k in range(run['count']):
+            b, g, r = image_colors[i][j][:3]
+            for k in range(image_runs[i][j]):
                 restored_image[x][y][0] = b
                 restored_image[x][y][1] = g
                 restored_image[x][y][2] = r
                 y += 1
+    return restored_image
 
 
-if __name__ == '__main__':
+def main():
+    """
+        Profile:
+            9522
+            8582: Optimized match pixel
+            93.22: Find by run, mostly using Numpy
+
+        Iterations:
+            6167
+            6071
+    """
     file_names = glob('data/*')
     sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
-    sprite_runs = {k: np_reduce_by_run(v) for k, v in sprites.items()}
-    #sprites = {
-    #    'small_jump': sprites['small_jump'],
-    #    'goomba_1': sprites['goomba_1'],
-    #}
-
-    #indexed = {}
-    #for k in sprites.keys():
-    #    indexed[k] = index_sprite(sprites[k])
+    indexed = {k: index_sprite(v) for k, v in sprites.items()}
+    sprites = {
+        'small_jump': sprites['small_jump'],
+        #'qblock_1': sprites['qblock_1'],
+        #'qblock_2': sprites['qblock_2'],
+        #'qblock_3': sprites['qblock_3'],
+    }
+    # sprite_runs = {k: np_reduce_by_run(v, transparency=True) for k, v in sprites.items()}
 
     accume = 0
     for fn in range(len(file_names))[1224:1234]:
-        fn = 'data/{}.png'.format(fn)
-        image = reduce_image(cv2.imread(fn, cv2.IMREAD_COLOR))
-        find_sprites_by_run(image, sprites)
-
         cprint('{}: {}'.format(accume, fn), 'cyan')
+        fn = 'data/{}.png'.format(fn)
+        original = cv2.imread(fn, cv2.IMREAD_COLOR)  # [300:, :]
+
+        image = reduce_image(original)
+        find_sprites_by_run(image, sprites, original)
+        sys.exit()
+        #naive_find_sprite(image, sprites, indexed)
+
+
+if __name__ == '__main__':
+    main()
