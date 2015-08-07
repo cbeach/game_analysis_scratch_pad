@@ -4,7 +4,7 @@ import sys
 
 import cv2
 import numpy as np
-from termcolor import cprint
+from termcolor import cprint, colored
 
 from sprite_sheet_tools import image_palette, get_sprites
 
@@ -308,45 +308,79 @@ def find_sprites_by_run(image, sprites, original):
 
     restore_image(image_runs, image_colors)
     count = 0
+    c_image = image.copy()
     for name, h in hashed_first.items():
         first_runs_found = np.nonzero(np.where(hashed == h, hashed, 0))
         for x, y in zip(*first_runs_found):
-            if count == 24:
-                optimized_match_spite(image_runs, image_colors, sprite_runs[name]['runs'],
-                                      sprite_runs[name]['colors'], x, y, leading_edge[name],
-                                      original)
-                erase_sprite_runs(image_runs, image_colors, image_accum, sprite_runs[name]['runs'],
-                                  sprite_runs[name]['colors'], sprite_runs[name]['trans'],
-                                  leading_edge[name], background_color, x, y, hashed)
-                print(x, int(sum(image_runs[x][:y])))
+            img_y = int(image_accum[x][y - 1])
+
+            if img_y < image.shape[1] / 2:
+                continue
+
+            if optimized_match_spite(image_runs, image_colors, image_accum,
+                                     sprite_runs[name]['runs'], sprite_runs[name]['colors'],
+                                     sprite_runs[name]['trans'], x, y, leading_edge[name], image):
+                image_colors, hashed_image = erase_sprite_runs(image_runs, image_colors,
+                    image_accum, sprite_runs[name]['runs'], sprite_runs[name]['colors'],
+                    sprite_runs[name]['trans'], leading_edge[name],
+                    background_color, x, y, hashed)
+                cprint('True', 'green')
+            else:
+                cprint('False', 'red')
                 # cv2.circle(original, (int(sum(image_runs[x][:y])) * 2, x * 2), 5, (0, 255, 0))
+                # show_image(expand_image(restore_image(image_runs, image_colors)))
             count += 1
+        show_image(expand_image(c_image))
 
 
-def optimized_match_spite(image_runs, image_colors, sprite_runs, sprite_colors, x, y,
-                          leading_edge, original):
+def optimized_match_spite(image_runs, image_colors, image_accum, sprite_runs, sprite_colors,
+                          sprite_trans, x, y, leading_edge, image):
+    #TODO: Create a decision tree for this damn thing
     img_y = int(sum(image_runs[x][:y]))
     tlc = (x, img_y - leading_edge[0])
+    image_colors = image_colors.astype('ubyte')
+    sprite_colors = sprite_colors.astype('ubyte')[:, :, :3]
     for i, l in enumerate(leading_edge):
-        original[(x + i) * 2][(tlc[1]) * 2][0] = 0
-        original[(x + i) * 2][(tlc[1]) * 2][1] = 255
-        original[(x + i) * 2][(tlc[1]) * 2][2] = 0
+        index = np.searchsorted(image_accum[x + i], tlc[1] + l)
+        sprite_nz = np.nonzero(sprite_trans[i])
+        first_nz = sprite_nz[0][0]
+        last_nz = sprite_nz[0][-1] + 1
+        for j, t in enumerate(sprite_trans[i][first_nz:last_nz]):
+            if t != 0 and not np.array_equal(image_colors[x + i][index + j + 1],
+                                             sprite_colors[i][first_nz + j]):
+                #TODO: - if this is the last run, and the image run is the same color, but a
+                #        larger value, then the loop should just continue.
+                #      - Similar situation for the first run.
+                #      - For solid runs that can be contained in larger solid runs
+
+                #return False
+                np.copyto(image_colors[x + i][index + j + 1], np.array([0, 0, 255], dtype='ubyte'))
+            else:
+                np.copyto(image_colors[x + i][index + j + 1], np.array([0, 255, 0], dtype='ubyte'))
+
+    show_image(expand_image(restore_image(image_runs, image_colors)))
+        # np.copyto(image[x + i][tlc[1] + l], fill_color)
+    #show_image(expand_image(restore_image(image_runs, image_colors)))
+    return True
 
 
 def erase_sprite_runs(image_runs, image_colors, image_accum, sprite_runs, sprite_colors,
-                      sprite_trans, leading_edge, bg_color, x, y, hashed_image):
-    bg_color = np.array(bg_color)
+                      sprite_trans, leading_edge, fill_color, x, y, hashed_image):
+    fill_color = np.array(fill_color, dtype='ubyte')
+    hashed_fill_color = hash_pixel(fill_color)
     img_y = int(sum(image_runs[x][:y]))
     tlc = (x, img_y - leading_edge[0])
     for i, l in enumerate(leading_edge):
         index = np.searchsorted(image_accum[x + i], tlc[1] - l)
-        for j in sprite_trans[i]:
-            if sprite_trans[i][j] == 0:
-                image_colors[x + i][index + j + 1][0] = bg_color[0]
-                image_colors[x + i][index + j + 1][1] = bg_color[1]
-                image_colors[x + i][index + j + 1][2] = bg_color[2]
-
-    show_image(restore_image(image_runs, image_colors))
+        sprite_nz = np.nonzero(sprite_trans[i])
+        first_nz = sprite_nz[0][0]
+        last_nz = sprite_nz[0][-1] + 1
+        for j, t in enumerate(sprite_trans[i][first_nz:last_nz]):
+            if t != 0:
+                np.copyto(image_colors[x + i][index + j + 1], fill_color)
+                count = image_runs[x + i][index + j + 1]
+                hashed_image[x + i][index + j + 1] = hashed_fill_color + count
+    return image_colors, hashed_image
 
 
 def old_find_sprites_by_run(first_runs, image_runs, image_colors, sprite, image, sprites, sprite_runs):
@@ -465,7 +499,6 @@ def np_reduce_by_run(image, transparency=False):
     count = 0
     for i, row in enumerate(image):
         color = image[i][0]
-
         run_y = 0
         for j, pixel in enumerate(row):
             if np.array_equal(color[:3], pixel[:3]):
@@ -507,6 +540,20 @@ def restore_image(image_runs, image_colors):
     return restored_image
 
 
+def expand_image(image):
+    h, w, d = image.shape[:3]
+    expanded = np.zeros((h * 2, w * 2, d), dtype='ubyte')
+    for x, row in enumerate(image):
+        for y, p in enumerate(row):
+            ex = x * 2
+            ey = y * 2
+            np.copyto(expanded[ex][ey], p)
+            np.copyto(expanded[ex][ey + 1], p)
+            np.copyto(expanded[ex + 1][ey], p)
+            np.copyto(expanded[ex + 1][ey + 1], p)
+    return expanded
+
+
 def main():
     """
         Profile:
@@ -522,8 +569,8 @@ def main():
     sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
     indexed = {k: index_sprite(v) for k, v in sprites.items()}
     sprites = {
-        'small_jump': sprites['small_jump'],
-        #'qblock_1': sprites['qblock_1'],
+        #'small_jump': sprites['small_jump'],
+        'qblock_1': sprites['qblock_1'],
         #'qblock_2': sprites['qblock_2'],
         #'qblock_3': sprites['qblock_3'],
     }
