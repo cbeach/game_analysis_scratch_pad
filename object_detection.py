@@ -330,7 +330,7 @@ def find_sprites_by_run(image, sprites, original):
                 # cv2.circle(original, (int(sum(image_runs[x][:y])) * 2, x * 2), 5, (0, 255, 0))
                 # show_image(expand_image(restore_image(image_runs, image_colors)))
             count += 1
-        show_image(expand_image(c_image))
+        # show_image(expand_image(c_image))
 
 
 def optimized_match_spite(image_runs, image_colors, image_accum, sprite_runs, sprite_colors,
@@ -346,17 +346,27 @@ def optimized_match_spite(image_runs, image_colors, image_accum, sprite_runs, sp
         first_nz = sprite_nz[0][0]
         last_nz = sprite_nz[0][-1] + 1
         for j, t in enumerate(sprite_trans[i][first_nz:last_nz]):
+            print('{}: {}'.format(image_colors[x + i][index + j + 1], sprite_colors[i][first_nz + j]))
             if t != 0 and not np.array_equal(image_colors[x + i][index + j + 1],
                                              sprite_colors[i][first_nz + j]):
+                #image_colors[x + i][index + j + 1]
                 #TODO: - if this is the last run, and the image run is the same color, but a
                 #        larger value, then the loop should just continue.
                 #      - Similar situation for the first run.
                 #      - For solid runs that can be contained in larger solid runs
 
                 #return False
-                np.copyto(image_colors[x + i][index + j + 1], np.array([0, 0, 255], dtype='ubyte'))
+                if i == 4:
+                    fill_color = np.array([255, 0, 255], dtype='ubyte')
+                else:
+                    fill_color = np.array([0, 0, 255], dtype='ubyte')
+                np.copyto(image_colors[x + i][index + j + 1], fill_color)
             else:
-                np.copyto(image_colors[x + i][index + j + 1], np.array([0, 255, 0], dtype='ubyte'))
+                if i == 3:
+                    fill_color = np.array([255, 0, 0], dtype='ubyte')
+                else:
+                    fill_color = np.array([0, 255, 0], dtype='ubyte')
+                np.copyto(image_colors[x + i][index + j + 1], fill_color)
 
     show_image(expand_image(restore_image(image_runs, image_colors)))
         # np.copyto(image[x + i][tlc[1] + l], fill_color)
@@ -554,6 +564,12 @@ def expand_image(image):
     return expanded
 
 
+class SpriteTree:
+    def __init__(self, sprites):
+
+
+
+
 def main():
     """
         Profile:
@@ -568,12 +584,12 @@ def main():
     file_names = glob('data/*')
     sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
     indexed = {k: index_sprite(v) for k, v in sprites.items()}
-    sprites = {
-        #'small_jump': sprites['small_jump'],
-        'qblock_1': sprites['qblock_1'],
-        #'qblock_2': sprites['qblock_2'],
-        #'qblock_3': sprites['qblock_3'],
-    }
+    #sprites = {
+    #    'small_jump': sprites['small_jump'],
+    #    'qblock_1': sprites['qblock_1'],
+    #    'qblock_2': sprites['qblock_2'],
+    #    'qblock_3': sprites['qblock_3'],
+    #}
     # sprite_runs = {k: np_reduce_by_run(v, transparency=True) for k, v in sprites.items()}
 
     accume = 0
