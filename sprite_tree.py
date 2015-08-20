@@ -1,5 +1,4 @@
 from collections import Counter, defaultdict
-from itertools import combinations
 import sys
 
 import numpy as np
@@ -16,27 +15,30 @@ class SpriteTree:
         self._names = [k for k, v in sprites]
         self._sprites = [v for k, v in sprites]
 
-        self.get_full_palette()
-        self.palettize_sprites()
+        self._full_palette = self.get_full_palette(self._sprites)
+        self._p_sprites = self.palettize_sprites(self._sprites)
         self._index = self.index_sprites()
-        self.hash_index()
-        self.compute_probabilities()
+        self._hashed = self.hash_index(self._index)
+        self._probabilities = self.compute_probabilities()
+        self.create_tree(self._sprites, self._probabilities)
 
-    def hash_index(self):
-        self._hashed = []
-        for i in self._index:
-            self._hashed.append(i['first_palette']
-                                + (i['first_pixel'][0] << 8)
-                                + (i['first_pixel'][1] << 16))
+    def hash_index(self, index):
+        hashed = []
+        for i in index:
+            hashed.append(i['first_palette']
+                          + (i['first_pixel'][0] << 8)
+                          + (i['first_pixel'][1] << 16))
+        return hashed
 
-    def palettize_sprites(self):
-        self._p_sprites = []
-        for s in self._sprites:
+    def palettize_sprites(self, sprites):
+        p_sprites = []
+        for s in sprites:
             palettized = np.zeros(s.shape[:2], dtype='int')
             non_trans = np.nonzero(s[:, :, 3])
             for x, y in zip(*non_trans):
                 palettized[x][y] = self._full_palette[tuple(s[x][y][:3])]
-            self._p_sprites.append(palettized)
+            p_sprites.append(palettized)
+        return p_sprites
 
     def get_sprite_palette(self, sprite):
         if len(sprite.shape) == 2:
@@ -55,16 +57,15 @@ class SpriteTree:
 
         return Counter(palette)
 
-    def get_full_palette(self):
-        self._full_palette = {}
+    def get_full_palette(self, sprites):
         palette = defaultdict(int)
-        for sprite in self._sprites:
+        for sprite in sprites:
             p = self.get_sprite_palette(sprite)
             for k, v in p.items():
                 palette[k] += v
 
         palette = sorted(Counter(palette).items(), key=lambda a: a[1], reverse=True)
-        self._full_palette = {color[0]: number + 1 for number, color in enumerate(palette)}
+        return {color[0]: number + 1 for number, color in enumerate(palette)}
 
     def first_non_trans_pixel(self, sprite):
         return zip(*np.nonzero(sprite[:, :, 3]))[0]
@@ -100,8 +101,18 @@ class SpriteTree:
         mask = np.ones(array.shape[:2])
         return self.pad_to_size(array, x, y), self.pad_to_size(mask, x, y)
 
-    def create_tree(self):
-        self.compute_probabilities()
+    def create_tree(self, sprites, probabilities):
+        # [fp_clr][sprite][x][y]
+        def sorting_function(a, b):
+            return abs(0.5 - prob[a[0]][a[1]]) > abs(0.5 - prob[b[0]][b[1]])
+
+        for frst_px, sprt_list in probabilities.items():
+            for i, index in enumerate(sprt_list['indices']):
+                prob = sprt_list['prob'][i]
+                sprite = sprites[index]
+                filtered = np.logical_not(np.isclose(prob, 1))
+                filtered = zip(*np.nonzero(np.where(filtered, prob, 0)))
+
 
     def stack_arrays(self, arrays):
         max_height, max_width = self.max_sprite_shape(arrays=arrays)
@@ -126,24 +137,21 @@ class SpriteTree:
     def compute_probabilities(self):
         max_height, max_width = self.max_sprite_shape()
         stack, masks = self.stack_arrays_and_masks(self._p_sprites)
-        a = [stack[:, :, 0], stack[:, :, 1], stack[:, :, 2]]
-        for s in a:
-            for row in s:
-                r = list(row)
-                print(', '.join(map(str, r)))
-            print
 
         # Group the sprites by the hashed value of their first pixels
         grouped_sprites = defaultdict(list)
-        grouped_masks = defaultdict(list)
-        grouped_name = defaultdict(list)
+        # grouped_masks = defaultdict(list)
+        # grouped_names = defaultdict(list)
+        grouped_indices = defaultdict(list)
         for i, h in enumerate(self._hashed):
+            h = h & 0xFF
             grouped_sprites[h].append(stack[:, :, i])
-            grouped_masks[h].append(masks[:, :, i])
-            grouped_name[h].append(self._names[i])
+            # grouped_masks[h].append(masks[:, :, i])
+            # grouped_names[h].append(self._names[i])
+            grouped_indices[h].append(i)
 
         grouped_sprites = {h: np.array(sprites) for h, sprites in grouped_sprites.items()}
-        grouped_masks = {h: np.array(masks) for h, masks in grouped_masks.items()}
+        # grouped_masks = {h: np.array(masks) for h, masks in grouped_masks.items()}
 
         # Currently trying to figure out the probability calculation algorith
         # [fp_clr][sprite][x][y]
@@ -163,16 +171,20 @@ class SpriteTree:
                         if s[x][y] in clrs:
                             l = s[x][y]
                             prob[j][x][y] = float(counter[l]) / float(prob_space)
-            probabilities[hsh] = prob
+            probabilities[hsh] = {
+                'prob': prob,
+                'indices': grouped_indices[hsh]
+            }
+        return probabilities
 
 
 def main():
     sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
-    sprites = {
-        'small_run_1': sprites['small_run_1'],
-        'big_run_1': sprites['big_run_1'],
-        'big_run_3': sprites['big_run_3'],
-    }
+    #sprites = {
+    #    'small_run_1': sprites['small_run_1'],
+    #    'big_run_1': sprites['big_run_1'],
+    #    'big_run_3': sprites['big_run_3'],
+    #}
     SpriteTree(sprites)
 
 
