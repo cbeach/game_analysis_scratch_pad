@@ -1,4 +1,5 @@
 from collections import Counter, defaultdict
+import math
 import sys
 
 import numpy as np
@@ -19,8 +20,10 @@ class SpriteTree:
         self._p_sprites = self.palettize_sprites(self._sprites)
         self._index = self.index_sprites()
         self._hashed = self.hash_index(self._index)
-        self._probabilities = self.compute_probabilities()
-        self.create_tree(self._sprites, self._probabilities)
+        self._probabilities = self.group_and_compute_probabilities()
+        self._sorted_probs = self.sort_probabilites(self._sprites, self._probabilities)
+        self._color_probabilities = self.index_color_probabilities()
+        self._pairwise_probabilities = self.index_pairwise_probabilities()
 
     def hash_index(self, index):
         hashed = []
@@ -80,6 +83,95 @@ class SpriteTree:
             index.append(sprite_index)
         return index
 
+    def hash_pair(self, a, b):
+        try:
+            iter(a)
+            a = self._full_palette(tuple(a))
+        except TypeError:
+            # The value a is a palette value
+            pass
+
+        try:
+            iter(b)
+            b = self._full_palette(tuple(b))
+        except TypeError:
+            # The value a is a palette value
+            pass
+        power = int(math.ceil(math.log(max(self._full_palette.values()), 2)))
+        return (a << power) + b
+
+    def get_horizontal_pairs(self, p_sprite):
+        return_pairs = []
+        for i in range(2):
+            pairs = np.array_split(p_sprite, np.arange(i, p_sprite.shape[1], 2), 1)
+            for pair_set in pairs:
+                if pair_set.shape[1] < 2:
+                    continue
+                for pair in pair_set:
+                    return_pairs.append(pair)
+        return return_pairs
+
+    def get_vertical_pairs(self, p_sprite):
+        return_pairs = []
+        p_sprite = p_sprite.T
+        for i in range(2):
+            pairs = np.array_split(p_sprite, np.arange(i, p_sprite.shape[1], 2), 1)
+            for pair_set in pairs:
+                if pair_set.shape[1] < 2:
+                    continue
+                for pair in pair_set:
+                    return_pairs.append(pair)
+        return return_pairs
+
+    def index_pairwise_probabilities(self):
+        max_color_val = max(self._full_palette.values())
+        all_pairs = []
+        for s in self._p_sprites:
+            s_pairs = []
+            s_pairs.extend(self.get_horizontal_pairs(s))
+            per_sprite_totals = np.zeros((max_color_val + 1, max_color_val + 1))
+            for a, b in s_pairs:
+                per_sprite_totals[a][b] += 1
+            all_pairs.append(per_sprite_totals)
+        all_pairs = np.array(all_pairs)
+        totals = np.sum(all_pairs, 0)
+
+        np.seterr(invalid='ignore')
+        probs = {
+            'horz': np.nan_to_num(np.divide(all_pairs, totals)),
+        }
+        np.seterr()
+
+        all_pairs = []
+        for s in self._p_sprites:
+            s_pairs = []
+            s_pairs.extend(self.get_vertical_pairs(s))
+            per_sprite_totals = np.zeros((max_color_val + 1, max_color_val + 1))
+            for a, b in s_pairs:
+                per_sprite_totals[a][b] += 1
+            all_pairs.append(per_sprite_totals)
+        all_pairs = np.array(all_pairs)
+        totals = np.sum(all_pairs, 0)
+
+        np.seterr(invalid='ignore')
+        probs['vert'] = np.nan_to_num(np.divide(all_pairs, totals))
+        np.seterr()
+
+        return probs
+
+    def index_color_probabilities(self):
+        """
+        Given a color, what is the probability that that pixel belongs to each sprite.
+        """
+        array_len = max(self._full_palette.values())
+        per_sprite_totals = []
+        for s in self._p_sprites:
+            bins = np.bincount(s.flatten())[1:]
+            per_sprite_totals.append(np.pad(bins, (0, array_len - bins.shape[0]), 'constant'))
+
+        totals = np.sum(per_sprite_totals, 0)
+        return np.divide(per_sprite_totals, totals)
+
     def max_sprite_shape(self, arrays=None):
         arrays = self._sprites if arrays is None else arrays
         max_height = max([v.shape[0] for v in arrays])
@@ -101,18 +193,27 @@ class SpriteTree:
         mask = np.ones(array.shape[:2])
         return self.pad_to_size(array, x, y), self.pad_to_size(mask, x, y)
 
-    def create_tree(self, sprites, probabilities):
+    def sort_probabilites(self, sprites, probabilities):
         # [fp_clr][sprite][x][y]
+        # Sort acording to distance from 50%
         def sorting_function(a, b):
-            return abs(0.5 - prob[a[0]][a[1]]) > abs(0.5 - prob[b[0]][b[1]])
+            dist_a = abs(0.5 - prob[a[0]][a[1]])
+            dist_b = abs(0.5 - prob[b[0]][b[1]])
+            if dist_a < dist_b:
+                return -1
+            elif dist_a == dist_b:
+                return 0
+            elif dist_a > dist_b:
+                return 1
 
-        for frst_px, sprt_list in probabilities.items():
-            for i, index in enumerate(sprt_list['indices']):
-                prob = sprt_list['prob'][i]
-                sprite = sprites[index]
+        sorted_probs = defaultdict(list)
+        for first_px, sprite_list in probabilities.items():
+            for i, index in enumerate(sprite_list['indices']):
+                prob = sprite_list['prob'][i]
                 filtered = np.logical_not(np.isclose(prob, 1))
                 filtered = zip(*np.nonzero(np.where(filtered, prob, 0)))
-
+                sorted_probs[first_px].append(sorted(filtered, sorting_function))
+        return sorted_probs
 
     def stack_arrays(self, arrays):
         max_height, max_width = self.max_sprite_shape(arrays=arrays)
@@ -134,7 +235,7 @@ class SpriteTree:
 
         return np.dstack(reshaped_arrays), np.dstack(masks)
 
-    def compute_probabilities(self):
+    def group_and_compute_probabilities(self):
         max_height, max_width = self.max_sprite_shape()
         stack, masks = self.stack_arrays_and_masks(self._p_sprites)
 
@@ -152,30 +253,50 @@ class SpriteTree:
 
         grouped_sprites = {h: np.array(sprites) for h, sprites in grouped_sprites.items()}
         # grouped_masks = {h: np.array(masks) for h, masks in grouped_masks.items()}
-
-        # Currently trying to figure out the probability calculation algorith
-        # [fp_clr][sprite][x][y]
         probabilities = {}
         for i, k_v_pair in enumerate(grouped_sprites.items()):
             hsh, sprites = k_v_pair
-            prob = np.zeros(sprites.shape)
-            for j, s in enumerate(sprites):
-                for x, row in enumerate(s):
-                    for y, pix in enumerate(row):
-                        colors_across_sprites = sprites[:, x, y]
-                        counter = np.bincount(colors_across_sprites)
-                        if len(counter) == 1:
-                            continue
-                        clrs = np.nonzero(counter)[0]
-                        prob_space = np.sum(counter)
-                        if s[x][y] in clrs:
-                            l = s[x][y]
-                            prob[j][x][y] = float(counter[l]) / float(prob_space)
-            probabilities[hsh] = {
-                'prob': prob,
-                'indices': grouped_indices[hsh]
-            }
+            probabilities[hsh] = self.compute_probabilites(sprites, grouped_indices[hsh], hsh)
         return probabilities
+
+    def compute_probabilites(self, sprites, indices, first_pixel, given=[]):
+        # Currently trying to figure out the probability calculation algorith
+        # [fp_clr][sprite][x][y]
+        prob = np.zeros(sprites.shape)
+        for j, s in enumerate(sprites):
+            for x, row in enumerate(s):
+                for y, pix in enumerate(row):
+                    colors_across_sprites = sprites[:, x, y]
+                    counter = np.bincount(colors_across_sprites)
+                    if len(counter) == 1:
+                        continue
+                    clrs = np.nonzero(counter)[0]
+                    prob_space = np.sum(counter)
+                    if s[x][y] in clrs:
+                        l = s[x][y]
+                        prob[j][x][y] = float(counter[l]) / float(prob_space)
+        return {
+            'prob': prob,
+            'indices': indices,
+            'given': given,
+        }
+
+    def id_sprite(self, image, x, y):
+        first_px = image[x][y]
+        if tuple(first_px[:3]) not in self._full_palette.keys():
+            return None
+
+    def get_horizontal_probability(self, left, right):
+        if left == 0 and right == 0:
+            raise ValueError("Both pixels can't be transparent.")
+
+        return self._pairwise_probabilities['horz'][:, left, right]
+
+    def get_vertical_probability(self, top, bottom):
+        if top == 0 and bottom == 0:
+            raise ValueError("Both pixels can't be transparent.")
+
+        return self._pairwise_probabilities['vert'][:, top, bottom]
 
 
 def main():
@@ -185,8 +306,17 @@ def main():
     #    'big_run_1': sprites['big_run_1'],
     #    'big_run_3': sprites['big_run_3'],
     #}
-    SpriteTree(sprites)
+    st = SpriteTree(sprites)
 
+    cprint(len(sprites), 'yellow')
+    probs = st.get_horizontal_probability(1, 1)
+    named_probs = sorted(zip(st._names, probs), key=lambda a: a[1])
+
+    for n, p in named_probs:
+        print('{}: {}'.format(n, p))
+    print
+    for k, v in st._full_palette.items():
+        print('{}: {}'.format(k, v))
 
 if __name__ == '__main__':
     main()
