@@ -17,7 +17,7 @@ class SegmentedImage:
     def __init__(self, sprite_tree, image):
         self._sprite_tree = sprite_tree
         self._image = image
-        self._palettized_image = self.palettize_image()
+        # self._palettized_image = self.palettize_image()
 
     def unhash_pixel(self, px):
         return (px & 0xFF0000) >> 16, (px & 0x00FF00) >> 8, (px & 0x0000FF)
@@ -48,11 +48,14 @@ class SegmentedImage:
             self._sprite_tree.id_sprite(self._image, x, y)
 
     def palettize_image(self):
-        if len(self.cached_palette) != 0:
-            return list(self.cached_palette)
-        hashed = self.hash_image()
-        palette = np.unique(hashed.flatten())
-        map(self.cached_palette.add, palette)
+        bg_color = np.array(self.background_color(hashed=False))
+        palettized_image = np.zeros(self._image.shape[:2])
+        for x, row in enumerate(self._image):
+            for y, px in enumerate(row):
+                if np.array_equal(px, bg_color):
+                    continue
+                c = self._sprite_tree._full_palette[tuple(px[:3])]
+                palettized_image[x][y] = c
 
     def background_color(self, hashed=True):
         return 0xFF848a if hashed is True else (255, 132, 138)
@@ -70,18 +73,21 @@ def main():
 
     single_sprite_si = SegmentedImage(st, single_sprite)
 
-    sys.exit()
     file_names = glob('data/*')
+    images = []
     for fn in range(len(file_names))[1224:3224]:
         fn = 'data/{}.png'.format(fn)
-
         original = cv2.imread(fn, cv2.IMREAD_COLOR)  # [300:, :]
         image = reduce_image(original)
+        images.append(image)
 
+    start = time.time()
+    for i, image in enumerate(images):
         si = SegmentedImage(st, image)
         si.find_sprites()
+        cprint((time.time() - start) / float(i + 1), 'green')
 
-    #cprint((time.time() - start) / 1000.0, 'green')
+    cprint((time.time() - start) / 1000.0, 'green')
 
     # obscured_si = SegmentedImage(st, obscured)
 
