@@ -286,6 +286,9 @@ class SpriteTree:
         if tuple(first_px[:3]) not in self._full_palette.keys():
             return None
 
+    def get_color_probability(self, color):
+        pass
+
     def get_horizontal_probability(self, left, right):
         if left == 0 and right == 0:
             raise ValueError("Both pixels can't be transparent.")
