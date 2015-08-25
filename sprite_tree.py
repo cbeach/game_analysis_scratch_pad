@@ -2,6 +2,7 @@ from collections import Counter, defaultdict
 import math
 import sys
 
+import cv2
 import numpy as np
 from termcolor import cprint
 
@@ -17,7 +18,7 @@ class SpriteTree:
         self._sprites = [v for k, v in sprites]
 
         self._full_palette = self.get_full_palette(self._sprites)
-        self._p_sprites = self.palettize_sprites(self._sprites)
+        self._p_sprites = self.hash_sprites()
         self._index = self.index_sprites()
         self._hashed = self.hash_index(self._index)
         self._probabilities = self.group_and_compute_probabilities()
@@ -33,14 +34,15 @@ class SpriteTree:
                           + (i['first_pixel'][1] << 16))
         return hashed
 
-    def palettize_sprites(self, sprites):
+    def hash_sprites(self):
         p_sprites = []
-        for s in sprites:
-            palettized = np.zeros(s.shape[:2], dtype='int')
-            non_trans = np.nonzero(s[:, :, 3])
-            for x, y in zip(*non_trans):
-                palettized[x][y] = self._full_palette[tuple(s[x][y][:3])]
-            p_sprites.append(palettized)
+        for sprite in self._sprites:
+            b, g, r, a = cv2.split(sprite)
+            bs = np.multiply(b, 2 ** 16)
+            gs = np.multiply(g, 2 ** 8)
+            # cache the hashed image
+            hashed = np.add(r, np.add(bs, gs))
+            p_sprites.append(np.where(a != 0, hashed, 0))
         return p_sprites
 
     def get_sprite_palette(self, sprite):
@@ -52,26 +54,33 @@ class SpriteTree:
             raise ValueError(('sprite array has incorrect dimensionality. sprite shape has {} '
                             'dimensions, but must have either 2 or 3.').format(len(sprite.shape)))
 
-        palette = []
-        for row in sprite:
-            for pixel in row:
-                if pixel[3] != 0:
-                    palette.append(tuple(pixel[:3]))
-
-        return Counter(palette)
+        b, g, r, a = cv2.split(sprite)
+        bs = np.multiply(b, 2 ** 16)
+        gs = np.multiply(g, 2 ** 8)
+        # cache the hashed image
+        hashed = np.add(r, np.add(bs, gs))
+        opaque = np.where(a != 0, hashed, 0)
+        transparent = np.where(a != 0, hashed, 0)
+        opaque_colors = np.unique(opaque)
+        # return it for consistency
+        return opaque_colors
 
     def get_full_palette(self, sprites):
-        palette = defaultdict(int)
+        palette = set()
         for sprite in sprites:
-            p = self.get_sprite_palette(sprite)
-            for k, v in p.items():
-                palette[k] += v
+            temp = self.get_sprite_palette(sprite)
+            for p in temp:
+                palette.add(p)
 
-        palette = sorted(Counter(palette).items(), key=lambda a: a[1], reverse=True)
-        return {color[0]: number + 1 for number, color in enumerate(palette)}
+        return np.array(sorted(list(palette)))
 
     def first_non_trans_pixel(self, sprite):
         return zip(*np.nonzero(sprite[:, :, 3]))[0]
+
+    def hash_pixel(self, b, g, r, a=255):
+        if a == 0:
+            return 0
+        return (b << 16) + (g << 8) + r
 
     def index_sprites(self):
         index = []
@@ -79,7 +88,7 @@ class SpriteTree:
             sprite_index = {}
             p_0x, p_0y = self.first_non_trans_pixel(s)
             sprite_index['first_pixel'] = (p_0x, p_0y)
-            sprite_index['first_palette'] = self._full_palette[tuple(s[p_0x][p_0y][:3])]
+            sprite_index['first_palette'] = self.hash_pixel(*s[p_0x][p_0y])
             index.append(sprite_index)
         return index
 
@@ -124,7 +133,7 @@ class SpriteTree:
         return return_pairs
 
     def index_pairwise_probabilities(self):
-        max_color_val = max(self._full_palette.values())
+        max_color_val = len(self._full_palette) + 1
         all_pairs = []
         for s in self._p_sprites:
             s_pairs = []
@@ -163,10 +172,11 @@ class SpriteTree:
         """
         Given a color, what is the probability that that pixel belongs to each sprite.
         """
-        array_len = max(self._full_palette.values())
+        array_len = len(self._full_palette) + 1
         per_sprite_totals = []
         for s in self._p_sprites:
-            bins = np.bincount(s.flatten())[1:]
+            bins = np.unique(s.flatten())
+            cprint(array_len - bins.shape[0], 'cyan')
             per_sprite_totals.append(np.pad(bins, (0, array_len - bins.shape[0]), 'constant'))
 
         totals = np.sum(per_sprite_totals, 0)
@@ -255,6 +265,7 @@ class SpriteTree:
         # grouped_masks = {h: np.array(masks) for h, masks in grouped_masks.items()}
         probabilities = {}
         for i, k_v_pair in enumerate(grouped_sprites.items()):
+            cprint(i, 'blue')
             hsh, sprites = k_v_pair
             probabilities[hsh] = self.compute_probabilites(sprites, grouped_indices[hsh], hsh)
         return probabilities
@@ -264,14 +275,15 @@ class SpriteTree:
         # [fp_clr][sprite][x][y]
         prob = np.zeros(sprites.shape)
         for j, s in enumerate(sprites):
+            cprint(j, 'yellow')
             for x, row in enumerate(s):
                 for y, pix in enumerate(row):
                     colors_across_sprites = sprites[:, x, y]
-                    counter = np.bincount(colors_across_sprites)
+                    counter = Counter(colors_across_sprites)
                     if len(counter) == 1:
                         continue
-                    clrs = np.nonzero(counter)[0]
-                    prob_space = np.sum(counter)
+                    clrs = counter.keys()
+                    prob_space = np.sum(counter.values())
                     if s[x][y] in clrs:
                         l = s[x][y]
                         prob[j][x][y] = float(counter[l]) / float(prob_space)
