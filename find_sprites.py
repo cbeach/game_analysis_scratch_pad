@@ -21,21 +21,19 @@ class SegmentedImage:
     def __init__(self, sprite_tree, image):
         self._sprite_tree = sprite_tree
         self._image = image
-        # self._palettized_image = self.palettize_image()
+        self.hash_image()
+        self._palettized_image = self.palettize_image()
 
     def unhash_pixel(self, px):
         return (px & 0xFF0000) >> 16, (px & 0x00FF00) >> 8, (px & 0x0000FF)
 
     def get_image_palette(self):
-        pass
-
-    def align_palette_with_sprite_tree(self):
-        pass
+        return np.unique(self._hashed)
 
     def hash_image(self):
         if hasattr(self, '_hashed') and self._hashed is not None:
             return self._hashed
-
+        cprint(type(self._image), 'blue')
         b, g, r = cv2.split(self._image)
         bs = np.multiply(b, 2 ** 16)
         gs = np.multiply(g, 2 ** 8)
@@ -65,7 +63,10 @@ class SegmentedImage:
         return 0xFF848a if hashed is True else (255, 132, 138)
 
     def marked_sprites(self):
-        pass
+        marked = np.zeros_like(self._image, dtype='float')
+        for i, row in enumerate(self._hashed):
+            for j, px in row:
+                self._st
 
 
 def main():
@@ -73,9 +74,12 @@ def main():
     st = SpriteTree(sprites)
 
     single_sprite = cv2.imread('data/test/small_jump.png', cv2.IMREAD_COLOR)
+    sys.exit()
     # obscured = cv2.imread('data/test/obscured.png', cv2.IMREAD_COLOR)
 
     single_sprite_si = SegmentedImage(st, single_sprite)
+    single_sprite_si.marked_sprites()
+    sys.exit()
 
     file_names = glob('data/*')
     images = []

@@ -18,6 +18,7 @@ class SpriteTree:
         self._sprites = [v for k, v in sprites]
 
         self._full_palette = self.get_full_palette(self._sprites)
+        self._palette_lookup = {c: i for i, c in enumerate(self._full_palette)}
         self._p_sprites = self.hash_sprites()
         self._index = self.index_sprites()
         self._hashed = self.hash_index(self._index)
@@ -140,6 +141,8 @@ class SpriteTree:
             s_pairs.extend(self.get_horizontal_pairs(s))
             per_sprite_totals = np.zeros((max_color_val + 1, max_color_val + 1))
             for a, b in s_pairs:
+                a = self._palette_lookup[a]
+                b = self._palette_lookup[b]
                 per_sprite_totals[a][b] += 1
             all_pairs.append(per_sprite_totals)
         all_pairs = np.array(all_pairs)
@@ -157,6 +160,8 @@ class SpriteTree:
             s_pairs.extend(self.get_vertical_pairs(s))
             per_sprite_totals = np.zeros((max_color_val + 1, max_color_val + 1))
             for a, b in s_pairs:
+                a = self._palette_lookup[a]
+                b = self._palette_lookup[b]
                 per_sprite_totals[a][b] += 1
             all_pairs.append(per_sprite_totals)
         all_pairs = np.array(all_pairs)
@@ -176,7 +181,6 @@ class SpriteTree:
         per_sprite_totals = []
         for s in self._p_sprites:
             bins = np.unique(s.flatten())
-            cprint(array_len - bins.shape[0], 'cyan')
             per_sprite_totals.append(np.pad(bins, (0, array_len - bins.shape[0]), 'constant'))
 
         totals = np.sum(per_sprite_totals, 0)
@@ -265,7 +269,6 @@ class SpriteTree:
         # grouped_masks = {h: np.array(masks) for h, masks in grouped_masks.items()}
         probabilities = {}
         for i, k_v_pair in enumerate(grouped_sprites.items()):
-            cprint(i, 'blue')
             hsh, sprites = k_v_pair
             probabilities[hsh] = self.compute_probabilites(sprites, grouped_indices[hsh], hsh)
         return probabilities
@@ -275,7 +278,6 @@ class SpriteTree:
         # [fp_clr][sprite][x][y]
         prob = np.zeros(sprites.shape)
         for j, s in enumerate(sprites):
-            cprint(j, 'yellow')
             for x, row in enumerate(s):
                 for y, pix in enumerate(row):
                     colors_across_sprites = sprites[:, x, y]
@@ -323,15 +325,12 @@ def main():
     #}
     st = SpriteTree(sprites)
 
-    cprint(len(sprites), 'yellow')
-    probs = st.get_horizontal_probability(1, 1)
+    probs = st.get_horizontal_probability(3, 3)
     named_probs = sorted(zip(st._names, probs), key=lambda a: a[1])
 
     for n, p in named_probs:
         print('{}: {}'.format(n, p))
     print
-    for k, v in st._full_palette.items():
-        print('{}: {}'.format(k, v))
 
 if __name__ == '__main__':
     main()
