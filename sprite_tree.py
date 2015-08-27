@@ -12,6 +12,7 @@ from sprite_sheet_tools import get_sprites
 
 class SpriteTree:
     def __init__(self, sprites):
+        self.temp_names = set()
         self._sprite_dict = sprites
         sprites = sprites.items()
         self._names = [k for k, v in sprites]
@@ -61,7 +62,6 @@ class SpriteTree:
         # cache the hashed image
         hashed = np.add(r, np.add(bs, gs))
         opaque = np.where(a != 0, hashed, 0)
-        transparent = np.where(a != 0, hashed, 0)
         opaque_colors = np.unique(opaque)
         # return it for consistency
         return opaque_colors
@@ -179,12 +179,17 @@ class SpriteTree:
         """
         array_len = len(self._full_palette) + 1
         per_sprite_totals = []
-        for s in self._p_sprites:
+        for i, s in enumerate(self._p_sprites):
             bins = np.unique(s.flatten())
             per_sprite_totals.append(np.pad(bins, (0, array_len - bins.shape[0]), 'constant'))
 
+        per_sprite_totals = np.array(per_sprite_totals, dtype=float)
         totals = np.sum(per_sprite_totals, 0)
-        return np.divide(per_sprite_totals, totals)
+        np.seterr(all='ignore')
+        prob = np.nan_to_num(np.divide(per_sprite_totals, totals.astype(float)))
+        np.seterr()
+
+        return prob
 
     def max_sprite_shape(self, arrays=None):
         arrays = self._sprites if arrays is None else arrays
@@ -295,13 +300,48 @@ class SpriteTree:
             'given': given,
         }
 
-    def id_sprite(self, image, x, y):
+    def most_probable_sprite(self, image, x, y):
+        if len(image.shape) != 2:
+            raise ValueError('A hashed image is required')
         first_px = image[x][y]
-        if tuple(first_px[:3]) not in self._full_palette.keys():
+        # given pixel (x, y)
+        # what is the joint probability of (x, y) and (x - 1, y)
+        if first_px not in self._palette_lookup.keys():
             return None
+        # up down left right
+        probability = self.get_color_probability(image[x][y])
+        #   c
+        # d a b
+        #   e
+        pairs = [0] * 4
+
+        if y < image.shape[1] - 1:
+            pairs[0] = (image[x][y], image[x][y + 1])
+        if x > 0:
+            pairs[1] = (image[x - 1][y], image[x][y])
+        if y > 0:
+            pairs[2] = (image[x][y - 1], image[x][y])
+        if x < image.shape[0] - 1:
+            pairs[3] = (image[x + 1][y], image[x][y])
+
+        probs = np.zeros((4, len(self._p_sprites)))
+        inverted_pw_probs = {k: np.nan_to_num(np.subtract(1, v))
+                             for k, v in self._pairwise_probabilities.items()}
+        for i, p in enumerate(pairs):
+            x, y = self._palette_lookup[p[0]], self._palette_lookup[p[1]]
+            if i % 2 == 0:
+                key = 'horz'
+            else:
+                key = 'vert'
+            np.copyto(probs[i], inverted_pw_probs[key][:, x, y])
+        probs = np.prod(probs, 0)
+        self.temp_names.add(self._names[np.argmin(probs)])
+        cprint(self.temp_names, 'yellow')
+
+        return np.argmin(probs)
 
     def get_color_probability(self, color):
-        pass
+        return self._color_probabilities[:, self._palette_lookup[color]]
 
     def get_horizontal_probability(self, left, right):
         if left == 0 and right == 0:
