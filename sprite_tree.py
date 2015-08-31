@@ -18,6 +18,8 @@ class SpriteTree:
         self._names = [k for k, v in sprites]
         self._sprites = [v for k, v in sprites]
 
+        self.get_continuous_areas()
+        sys.exit()
         self._full_palette = self.get_full_palette(self._sprites)
         self._palette_lookup = {c: i for i, c in enumerate(self._full_palette)}
         self._p_sprites = self.hash_sprites()
@@ -354,6 +356,20 @@ class SpriteTree:
             raise ValueError("Both pixels can't be transparent.")
 
         return self._pairwise_probabilities['vert'][:, top, bottom]
+
+    def get_continuous_areas(self):
+        # TODO: Find the bounding box for each area, then hash and index it.
+        for s in self._sprites:
+            masks = []
+            mask_shape = (s.shape[0] + 2, s.shape[1] + 2)
+            master_mask = np.zeros(mask_shape, dtype='ubyte')
+            r, g, b, a = cv2.split(s)
+            for x, y in zip(*np.nonzero(a)):
+                if a[x][y] == 0 or master_mask[x + 1][y + 1] is True:
+                    continue
+                masks.append(np.zeros(mask_shape, dtype='ubyte'))
+                cv2.floodFill(s[:, :, :3].astype('ubyte'), masks[-1], (0, 0), (0, 255, 0), flags=cv2.FLOODFILL_MASK_ONLY)
+                master_mask = np.logical_or(masks[-1], master_mask)
 
 
 def main():
