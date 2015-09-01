@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from termcolor import cprint
 
-from object_detection import reduce_image
+from object_detection import reduce_image, show_image
 from sprite_sheet_tools import get_sprites
 
 
@@ -310,11 +310,6 @@ class SpriteTree:
         # what is the joint probability of (x, y) and (x - 1, y)
         if first_px not in self._palette_lookup.keys():
             return None
-        # up down left right
-        probability = self.get_color_probability(image[x][y])
-        #   c
-        # d a b
-        #   e
         pairs = [0] * 4
 
         if y < image.shape[1] - 1:
@@ -358,27 +353,34 @@ class SpriteTree:
         return self._pairwise_probabilities['vert'][:, top, bottom]
 
     def get_continuous_areas(self):
-        # TODO: Find the bounding box for each area, then hash and index it.
         for s in self._sprites:
             masks = []
             mask_shape = (s.shape[0] + 2, s.shape[1] + 2)
-            master_mask = np.zeros(mask_shape, dtype='ubyte')
+            bounding_boxes = []
             r, g, b, a = cv2.split(s)
             for x, y in zip(*np.nonzero(a)):
-                if a[x][y] == 0 or master_mask[x + 1][y + 1] is True:
+                if a[x][y] == 0:
                     continue
                 masks.append(np.zeros(mask_shape, dtype='ubyte'))
-                cv2.floodFill(s[:, :, :3].astype('ubyte'), masks[-1], (0, 0), (0, 255, 0), flags=cv2.FLOODFILL_MASK_ONLY)
-                master_mask = np.logical_or(masks[-1], master_mask)
+                temp = s[:, :, :3].astype('ubyte')
+                cv2.floodFill(temp, masks[-1], (y, x), (0, 255, 0), flags=cv2.FLOODFILL_MASK_ONLY)
+                bb = np.nonzero(masks[-1][1:-1, 1:-1])
+                x1, y1 = min(bb[0]), min(bb[1])
+                x2, y2 = max(bb[0]), max(bb[1])
+                bounding_boxes.append(((x1, y1), (x2, y2)))
+                a = np.logical_and(np.logical_not(masks[-1][1:-1, 1:-1]), a).astype('ubyte')
+            bounding_boxes = list(set(bounding_boxes))
+            print(len(bounding_boxes))
 
 
 def main():
     sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
-    #sprites = {
-    #    'small_run_1': sprites['small_run_1'],
-    #    'big_run_1': sprites['big_run_1'],
-    #    'big_run_3': sprites['big_run_3'],
-    #}
+    sprites = {k: v for k, v in get_sprites('sprites').items()}
+    sprites = {
+        'small_jump': sprites['small_jump'],
+        #'big_run_1': sprites['big_run_1'],
+        #'big_run_3': sprites['big_run_3'],
+    }
     st = SpriteTree(sprites)
 
     probs = st.get_horizontal_probability(3, 3)
