@@ -1,8 +1,7 @@
-"""
-
-
-"""
 from glob import glob
+from hashlib import sha1
+import os
+import pickle
 import sys
 import time
 
@@ -76,8 +75,25 @@ class SegmentedImage:
 
 def main():
     np.set_printoptions(linewidth=150)
-    sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
-    st = SpriteTree(sprites)
+
+    # Read the code for this file and hash it
+    with open('sprite_tree.py', 'r') as fp:
+        my_hash_value = sha1(fp.read()).hexdigest()
+
+    # The pickling should really be done in the sprite_tree, but this is less
+    # of a PITA
+    file_name = 'pickled_sprites/{}'.format(my_hash_value)
+    if os.path.exists(file_name):
+        cprint('Unpickling SpriteTree', 'green')
+        with open(file_name, 'r') as fp:
+            st = pickle.load(fp)
+    else:
+        cprint('Pickling SpriteTree', 'yellow')
+        sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
+        st = SpriteTree(sprites)
+        with open(file_name, 'w') as fp:
+            pickle.dump(st, fp)
+
     img_f = ImageFactory(sprites, background_color=(255, 132, 138))
 
     image = np.zeros((224, 256, 3), dtype='ubyte')
