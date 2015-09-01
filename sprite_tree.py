@@ -18,8 +18,7 @@ class SpriteTree:
         self._names = [k for k, v in sprites]
         self._sprites = [v for k, v in sprites]
 
-        self.get_continuous_areas()
-        sys.exit()
+        self._patches = self.get_patches()
         self._full_palette = self.get_full_palette(self._sprites)
         self._palette_lookup = {c: i for i, c in enumerate(self._full_palette)}
         self._p_sprites = self.hash_sprites()
@@ -352,35 +351,48 @@ class SpriteTree:
 
         return self._pairwise_probabilities['vert'][:, top, bottom]
 
-    def get_continuous_areas(self):
+    def get_patches(self):
+        get_patch_runs = lambda m: np.trim_zeros([len(np.nonzero(row)[0]) for row in m])
+        all_patches = []
         for s in self._sprites:
-            masks = []
             mask_shape = (s.shape[0] + 2, s.shape[1] + 2)
-            bounding_boxes = []
             r, g, b, a = cv2.split(s)
+            s_patches = []
             for x, y in zip(*np.nonzero(a)):
                 if a[x][y] == 0:
                     continue
-                masks.append(np.zeros(mask_shape, dtype='ubyte'))
+                mask = np.zeros(mask_shape, dtype='ubyte')
                 temp = s[:, :, :3].astype('ubyte')
-                cv2.floodFill(temp, masks[-1], (y, x), (0, 255, 0), flags=cv2.FLOODFILL_MASK_ONLY)
-                bb = np.nonzero(masks[-1][1:-1, 1:-1])
+                cv2.floodFill(temp, mask, (y, x), (0, 255, 0), flags=cv2.FLOODFILL_MASK_ONLY)
+                # Trim off the 1 px wide border that is required by cv2.floodFill
+                trimmed_mask = mask[1:-1, 1:-1]
+
+                # bounding box
+                bb = np.nonzero(trimmed_mask)
                 x1, y1 = min(bb[0]), min(bb[1])
                 x2, y2 = max(bb[0]), max(bb[1])
-                bounding_boxes.append(((x1, y1), (x2, y2)))
-                a = np.logical_and(np.logical_not(masks[-1][1:-1, 1:-1]), a).astype('ubyte')
-            bounding_boxes = list(set(bounding_boxes))
-            print(len(bounding_boxes))
+                bb = ((x1, y1), (x2, y2))
+
+                a = np.logical_and(np.logical_not(trimmed_mask), a).astype('ubyte')
+                s_patches.append({
+                    'color': s[x][y][:3],
+                    'height': x2 - x1,
+                    'width': y2 - y1,
+                    'bounding_box': bb,
+                    'area': len(np.nonzero(trimmed_mask)[0]),
+                    'runs': get_patch_runs(trimmed_mask),
+                })
+            all_patches.append(s_patches)
+        return all_patches
 
 
 def main():
     sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
-    sprites = {k: v for k, v in get_sprites('sprites').items()}
-    sprites = {
-        'small_jump': sprites['small_jump'],
-        #'big_run_1': sprites['big_run_1'],
-        #'big_run_3': sprites['big_run_3'],
-    }
+    #sprites = {
+    #    'small_jump': sprites['small_jump'],
+    #    'big_run_1': sprites['big_run_1'],
+    #    'big_run_3': sprites['big_run_3'],
+    #}
     st = SpriteTree(sprites)
 
     probs = st.get_horizontal_probability(3, 3)
