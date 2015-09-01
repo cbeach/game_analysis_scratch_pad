@@ -19,6 +19,8 @@ class SpriteTree:
         self._sprites = [v for k, v in sprites]
 
         self._patches = self.get_patches()
+        self._patch_probabilites = self.index_patch_probabilities()
+        sys.exit()
         self._full_palette = self.get_full_palette(self._sprites)
         self._palette_lookup = {c: i for i, c in enumerate(self._full_palette)}
         self._p_sprites = self.hash_sprites()
@@ -191,6 +193,14 @@ class SpriteTree:
         np.seterr()
 
         return prob
+
+    def index_patch_probabilities(self):
+        flattened = [j for i in self._patches for j in i]
+        heights = np.bincount([f['height'] for f in flattened])
+        widths = np.bincount([f['width'] for f in flattened])
+        areas = np.bincount([f['area'] for f in flattened])
+        bounding_boxes = [f['bounding_box'] for f in flattened]
+        runs = [f['runs'] for f in flattened]
 
     def max_sprite_shape(self, arrays=None):
         arrays = self._sprites if arrays is None else arrays
