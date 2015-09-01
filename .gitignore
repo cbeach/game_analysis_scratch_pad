@@ -2,6 +2,9 @@
 *.pyc
 *.pyprof
 
+temp.*
+
+pickled_sprites/*
 data/*
 nestopia/*
 roms/NES/original/

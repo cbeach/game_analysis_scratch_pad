@@ -1,4 +1,5 @@
 from collections import Counter, defaultdict
+from hashlib import sha1
 import math
 import sys
 
@@ -12,6 +13,8 @@ from sprite_sheet_tools import get_sprites
 
 class SpriteTree:
     def __init__(self, sprites):
+        # temp_names is used for sanity checking the most probably sprite
+        # algorithm
         self.temp_names = set()
         self._sprite_dict = sprites
         sprites = sprites.items()
@@ -20,7 +23,6 @@ class SpriteTree:
 
         self._patches = self.get_patches()
         self._patch_probabilites = self.index_patch_probabilities()
-        sys.exit()
         self._full_palette = self.get_full_palette(self._sprites)
         self._palette_lookup = {c: i for i, c in enumerate(self._full_palette)}
         self._p_sprites = self.hash_sprites()
@@ -196,11 +198,40 @@ class SpriteTree:
 
     def index_patch_probabilities(self):
         flattened = [j for i in self._patches for j in i]
-        heights = np.bincount([f['height'] for f in flattened])
-        widths = np.bincount([f['width'] for f in flattened])
-        areas = np.bincount([f['area'] for f in flattened])
-        bounding_boxes = [f['bounding_box'] for f in flattened]
-        runs = [f['runs'] for f in flattened]
+        total_patches = float(len(flattened))
+        heights = {i: v for i, v in enumerate(np.bincount([f['height'] for f in flattened])) if v != 0}
+        widths = {i: v for i, v in enumerate(np.bincount([f['width'] for f in flattened])) if v != 0}
+        areas = {i: v for i, v in enumerate(np.bincount([f['area'] for f in flattened])) if v != 0}
+        bounding_boxes = Counter([f['bounding_box'] for f in flattened])
+        runs = Counter([f['runs'] for f in flattened])
+
+        probabilities = {
+            'height': [],
+            'width': [],
+            'area': [],
+            'bounding_box': [],
+            'runs': [],
+        }
+
+        # Compute the probability for each run
+        for sprite in self._patches:
+            h_probs = []
+            w_probs = []
+            a_probs = []
+            bb_probs = []
+            r_probs = []
+            for patch in sprite:
+                h_probs.append(float(heights[patch['height']]) / total_patches)
+                w_probs.append(float(widths[patch['width']]) / total_patches)
+                a_probs.append(float(areas[patch['area']]) / total_patches)
+                bb_probs.append(float(bounding_boxes[patch['bounding_box']]) / total_patches)
+                r_probs.append(float(runs[patch['runs']]) / total_patches)
+            probabilities['height'].append(h_probs)
+            probabilities['width'].append(w_probs)
+            probabilities['area'].append(a_probs)
+            probabilities['bounding_box'].append(bb_probs)
+            probabilities['runs'].append(r_probs)
+        return probabilities
 
     def max_sprite_shape(self, arrays=None):
         arrays = self._sprites if arrays is None else arrays
@@ -318,7 +349,7 @@ class SpriteTree:
         # given pixel (x, y)
         # what is the joint probability of (x, y) and (x - 1, y)
         if first_px not in self._palette_lookup.keys():
-            return None
+            raise ValueError('Color not recognized')
         pairs = [0] * 4
 
         if y < image.shape[1] - 1:
@@ -341,10 +372,14 @@ class SpriteTree:
                 key = 'vert'
             np.copyto(probs[i], inverted_pw_probs[key][:, x, y])
         probs = np.prod(probs, 0)
+        cprint(probs.shape, 'yellow')
+
         self.temp_names.add(self._names[np.argmin(probs)])
-        cprint(self.temp_names, 'yellow')
 
         return np.argmin(probs)
+
+    def get_patch_from_image(self, image):
+        pass
 
     def get_color_probability(self, color):
         return self._color_probabilities[:, self._palette_lookup[color]]
@@ -362,7 +397,7 @@ class SpriteTree:
         return self._pairwise_probabilities['vert'][:, top, bottom]
 
     def get_patches(self):
-        get_patch_runs = lambda m: np.trim_zeros([len(np.nonzero(row)[0]) for row in m])
+        get_patch_runs = lambda m: tuple(np.trim_zeros([len(np.nonzero(row)[0]) for row in m]))
         all_patches = []
         for s in self._sprites:
             mask_shape = (s.shape[0] + 2, s.shape[1] + 2)
