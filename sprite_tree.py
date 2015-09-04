@@ -20,8 +20,6 @@ class SpriteTree:
         self._names = [k for k, v in sprites]
         self._sprites = [v for k, v in sprites]
 
-        self._patches = self.get_patches()
-        self._patch_probabilites = self.index_patch_probabilities()
         self._full_palette = self.get_full_palette(self._sprites)
         self._palette_lookup = {c: i for i, c in enumerate(self._full_palette)}
         self._p_sprites = self.hash_sprites()
@@ -31,6 +29,8 @@ class SpriteTree:
         self._sorted_probs = self.sort_probabilites(self._sprites, self._probabilities)
         self._color_probabilities = self.index_color_probabilities()
         self._pairwise_probabilities = self.index_pairwise_probabilities()
+        self._patches = self.get_patches()
+        self._patch_probabilites = self.index_patch_probabilities()
 
     def hash_index(self, index):
         hashed = []
@@ -197,40 +197,39 @@ class SpriteTree:
 
     def index_patch_probabilities(self):
         flattened = [j for i in self._patches for j in i]
-        total_patches = float(len(flattened))
         heights = {i: v for i, v in enumerate(np.bincount([f['height'] for f in flattened])) if v != 0}
         widths = {i: v for i, v in enumerate(np.bincount([f['width'] for f in flattened])) if v != 0}
         areas = {i: v for i, v in enumerate(np.bincount([f['area'] for f in flattened])) if v != 0}
         bounding_boxes = Counter([f['bounding_box'] for f in flattened])
         runs = Counter([f['runs'] for f in flattened])
 
-        probabilities = {
-            'height': [],
-            'width': [],
-            'area': [],
-            'bounding_box': [],
-            'runs': [],
-        }
-
-        # Compute the probability for each run
+        per_sprite_counts = []
         for sprite in self._patches:
-            h_probs = []
-            w_probs = []
-            a_probs = []
-            bb_probs = []
-            r_probs = []
+            h = []
+            w = []
+            a = []
+            bb = []
+            r = []
             for patch in sprite:
-                h_probs.append(float(heights[patch['height']]) / total_patches)
-                w_probs.append(float(widths[patch['width']]) / total_patches)
-                a_probs.append(float(areas[patch['area']]) / total_patches)
-                bb_probs.append(float(bounding_boxes[patch['bounding_box']]) / total_patches)
-                r_probs.append(float(runs[patch['runs']]) / total_patches)
-            probabilities['height'].append(h_probs)
-            probabilities['width'].append(w_probs)
-            probabilities['area'].append(a_probs)
-            probabilities['bounding_box'].append(bb_probs)
-            probabilities['runs'].append(r_probs)
-        return probabilities
+                h.append(patch['height'])
+                w.append(patch['width'])
+                a.append(patch['area'])
+                bb.append(patch['bounding_box'])
+                r.append(patch['runs'])
+            h = {k: float(v) / float(heights[k]) for k, v in Counter(h).items()}
+            w = {k: float(v) / float(widths[k]) for k, v in Counter(w).items()}
+            a = {k: float(v) / float(areas[k]) for k, v in Counter(a).items()}
+            bb = {k: float(v) / float(bounding_boxes[k]) for k, v in Counter(bb).items()}
+            r = {k: float(v) / float(runs[k]) for k, v in Counter(r).items()}
+
+            per_sprite_counts.append({
+                'height': h,
+                'width': w,
+                'area': a,
+                'bounding_box': bb,
+                'runs': r,
+            })
+        return per_sprite_counts
 
     def max_sprite_shape(self, arrays=None):
         arrays = self._sprites if arrays is None else arrays
@@ -372,14 +371,35 @@ class SpriteTree:
             np.copyto(probs[i], inverted_pw_probs[key][:, temp_x, temp_y])
         probs = np.prod(probs, 0)
 
-        self.temp_names.add(self._names[np.argmin(probs)])
-        self.get_target_patch_from_image(image, x, y)
+        patch = self.get_target_patch_from_image(image, x, y)
+        patch_probs = np.zeros((4, 85))
 
-        return np.argmin(probs)
+        for i, s in enumerate(self._patch_probabilites):
+            temp = np.array([
+                s['height'].get(patch['height'], 0),
+                s['width'].get(patch['width'], 0),
+                s['area'].get(patch['area'], 0),
+                s['runs'].get(patch['runs'], 0),
+            ])
+            if np.any(np.isclose(temp, 1)) and not np.any(np.isclose(temp, 0)):
+                temp = np.ones_like(temp.shape)
+            np.copyto(patch_probs[:, i], temp)
+
+        patch_probs = np.prod(patch_probs, 0)
+        return np.argmax(patch_probs)
 
     def get_target_patch_from_image(self, image, x, y):
         mask = np.zeros((image.shape[0] + 2, image.shape[1] + 2), dtype='ubyte')
-        cv2.floodFill(image, mask, (x, y), (255, 0, 0), flags=cv2.FLOODFILL_MASK_ONLY)
+        cv2.floodFill(image, mask, (y, x), (255, 0, 0), flags=cv2.FLOODFILL_MASK_ONLY)
+        trimmed_mask = mask[1:-1, 1:-1]
+        bb = self.get_bounding_box(trimmed_mask)
+        return {
+            'color': image[x][y][:3],
+            'height': bb[1][0] - bb[0][0],
+            'width': bb[1][1] - bb[0][1],
+            'area': len(np.nonzero(trimmed_mask)[0]),
+            'runs': self.get_patch_runs(trimmed_mask),
+        }
 
     def get_color_probability(self, color):
         return self._color_probabilities[:, self._palette_lookup[color]]
