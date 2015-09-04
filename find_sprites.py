@@ -51,14 +51,13 @@ class SegmentedImage:
         names = self._sprite_tree._names
         sprite_names = []
         for x, y in zip(*not_zeros):
-            p = self._sprite_tree.most_probable_sprite(hashed, x, y)
+            p = self._sprite_tree.most_probable_sprite(hashed, self._image, x, y)
             index_of_max = np.argmax(p)
             sprite_names.append(names[index_of_max])
             if names[index_of_max] == 'small_jump':
                 color = np.array((0, 255, 0), dtype='ubyte')
             else:
                 color = np.array((0, 0, 255), dtype='ubyte')
-
             np.copyto(probs[x][y], color)
 
         return probs
@@ -83,13 +82,13 @@ def main():
     # The pickling should really be done in the sprite_tree, but this is less
     # of a PITA
     file_name = 'pickled_sprites/{}'.format(my_hash_value)
+    sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
     if os.path.exists(file_name):
         cprint('Unpickling SpriteTree', 'green')
         with open(file_name, 'r') as fp:
             st = pickle.load(fp)
     else:
         cprint('Pickling SpriteTree', 'yellow')
-        sprites = {k: reduce_image(v) for k, v in get_sprites('sprites').items()}
         st = SpriteTree(sprites)
         with open(file_name, 'w') as fp:
             pickle.dump(st, fp)
@@ -106,7 +105,6 @@ def main():
     image = img_f.blit(image, s[:, :, :3], s[:, :, 3], 50, 50)
     si = SegmentedImage(st, image)
     img = si.find_sprites()
-    show_image(img)
 
     sys.exit()
 

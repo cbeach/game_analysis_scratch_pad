@@ -1,5 +1,4 @@
 from collections import Counter, defaultdict
-from hashlib import sha1
 import math
 import sys
 
@@ -342,44 +341,45 @@ class SpriteTree:
             'given': given,
         }
 
-    def most_probable_sprite(self, image, x, y):
-        if len(image.shape) != 2:
-            raise ValueError('A hashed image is required')
-        first_px = image[x][y]
+    def most_probable_sprite(self, hashed, image, x, y):
+        if len(hashed.shape) != 2:
+            raise ValueError('A hashed hashed is required')
+        first_px = hashed[x][y]
         # given pixel (x, y)
         # what is the joint probability of (x, y) and (x - 1, y)
         if first_px not in self._palette_lookup.keys():
             raise ValueError('Color not recognized')
         pairs = [0] * 4
 
-        if y < image.shape[1] - 1:
-            pairs[0] = (image[x][y], image[x][y + 1])
+        if y < hashed.shape[1] - 1:
+            pairs[0] = (hashed[x][y], hashed[x][y + 1])
         if x > 0:
-            pairs[1] = (image[x - 1][y], image[x][y])
+            pairs[1] = (hashed[x - 1][y], hashed[x][y])
         if y > 0:
-            pairs[2] = (image[x][y - 1], image[x][y])
-        if x < image.shape[0] - 1:
-            pairs[3] = (image[x + 1][y], image[x][y])
+            pairs[2] = (hashed[x][y - 1], hashed[x][y])
+        if x < hashed.shape[0] - 1:
+            pairs[3] = (hashed[x + 1][y], hashed[x][y])
 
         probs = np.zeros((4, len(self._p_sprites)))
         inverted_pw_probs = {k: np.nan_to_num(np.subtract(1, v))
                              for k, v in self._pairwise_probabilities.items()}
         for i, p in enumerate(pairs):
-            x, y = self._palette_lookup[p[0]], self._palette_lookup[p[1]]
+            temp_x, temp_y = self._palette_lookup[p[0]], self._palette_lookup[p[1]]
             if i % 2 == 0:
                 key = 'horz'
             else:
                 key = 'vert'
-            np.copyto(probs[i], inverted_pw_probs[key][:, x, y])
+            np.copyto(probs[i], inverted_pw_probs[key][:, temp_x, temp_y])
         probs = np.prod(probs, 0)
-        cprint(probs.shape, 'yellow')
 
         self.temp_names.add(self._names[np.argmin(probs)])
+        self.get_target_patch_from_image(image, x, y)
 
         return np.argmin(probs)
 
-    def get_patch_from_image(self, image):
-        pass
+    def get_target_patch_from_image(self, image, x, y):
+        mask = np.zeros((image.shape[0] + 2, image.shape[1] + 2), dtype='ubyte')
+        cv2.floodFill(image, mask, (x, y), (255, 0, 0), flags=cv2.FLOODFILL_MASK_ONLY)
 
     def get_color_probability(self, color):
         return self._color_probabilities[:, self._palette_lookup[color]]
@@ -397,7 +397,6 @@ class SpriteTree:
         return self._pairwise_probabilities['vert'][:, top, bottom]
 
     def get_patches(self):
-        get_patch_runs = lambda m: tuple(np.trim_zeros([len(np.nonzero(row)[0]) for row in m]))
         all_patches = []
         for s in self._sprites:
             mask_shape = (s.shape[0] + 2, s.shape[1] + 2)
@@ -416,7 +415,7 @@ class SpriteTree:
                 bb = np.nonzero(trimmed_mask)
                 x1, y1 = min(bb[0]), min(bb[1])
                 x2, y2 = max(bb[0]), max(bb[1])
-                bb = ((x1, y1), (x2, y2))
+                bb = self.get_bounding_box(mask)
 
                 a = np.logical_and(np.logical_not(trimmed_mask), a).astype('ubyte')
                 s_patches.append({
@@ -425,10 +424,19 @@ class SpriteTree:
                     'width': y2 - y1,
                     'bounding_box': bb,
                     'area': len(np.nonzero(trimmed_mask)[0]),
-                    'runs': get_patch_runs(trimmed_mask),
+                    'runs': self.get_patch_runs(trimmed_mask),
                 })
             all_patches.append(s_patches)
         return all_patches
+
+    def get_bounding_box(self, trimmed_mask):
+        bb = np.nonzero(trimmed_mask)
+        x1, y1 = min(bb[0]), min(bb[1])
+        x2, y2 = max(bb[0]), max(bb[1])
+        return ((x1, y1), (x2, y2))
+
+    def get_patch_runs(self, patch):
+        return tuple(np.trim_zeros([len(np.nonzero(row)[0]) for row in patch]))
 
 
 def main():
