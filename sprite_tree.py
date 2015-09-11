@@ -205,17 +205,12 @@ class SpriteTree:
 
         per_sprite_counts = []
         for sprite in self._patches:
-            h = []
-            w = []
-            a = []
-            bb = []
-            r = []
-            for patch in sprite:
-                h.append(patch['height'])
-                w.append(patch['width'])
-                a.append(patch['area'])
-                bb.append(patch['bounding_box'])
-                r.append(patch['runs'])
+            h = [patch['height'] for patch in sprite]
+            w = [patch['width'] for patch in sprite]
+            a = [patch['area'] for patch in sprite]
+            bb = [patch['bounding_box'] for patch in sprite]
+            r = [patch['runs'] for patch in sprite]
+
             h = {k: float(v) / float(heights[k]) for k, v in Counter(h).items()}
             w = {k: float(v) / float(widths[k]) for k, v in Counter(w).items()}
             a = {k: float(v) / float(areas[k]) for k, v in Counter(a).items()}
@@ -343,6 +338,54 @@ class SpriteTree:
     def most_probable_sprite(self, hashed, image, x, y):
         if len(hashed.shape) != 2:
             raise ValueError('A hashed hashed is required')
+        cprint('{}: {}'.format((x, y), hashed[x][y]), 'magenta')
+
+        patch = self.get_target_patch_from_image(image, x, y)
+        patch_probs = np.zeros((4, 85))
+        cprint(patch['runs'], 'green')
+
+        for i, s in enumerate(self._patch_probabilites):
+            temp = np.array([
+                s['height'].get(patch['height'], 0),
+                s['width'].get(patch['width'], 0),
+                s['area'].get(patch['area'], 0),
+                s['runs'].get(patch['runs'], 0),
+            ])
+
+            np.copyto(patch_probs[:, i], temp)
+
+        int_probs = np.rint(np.multiply(patch_probs[3, :], 100))
+        cprint(int_probs, 'cyan')
+        prob_bins = [nz[0] for nz in np.nonzero(int_probs)]
+        cprint(prob_bins, 'blue')
+        print
+        if len(prob_bins) == 1:
+            # Check if the only non-zero element is equal to 100%
+            sprite_index = prob_bins[0]
+            if int_probs[prob_bins[0]] == 100:
+                    # A perfect match has been found, return the following information
+                    # Sprite index
+                    # Sprite name
+                    # Sprite location
+                    # Sprite bounding box
+                    sprite = self._sprites[sprite_index]
+                    patch_info = [p for p in self._patches[sprite_index]
+                        if p['runs'] == patch['runs']]
+                    if len(patch_info) == 1:
+                        patch_info = patch_info[0]
+                    offset = (x - patch_info['offset'][0], y - patch_info['offset'][1])
+                    bounding_box = (offset,
+                        (offset[0] + sprite.shape[0], offset[1] + sprite.shape[1]))
+
+                    return {
+                        'index': sprite_index,
+                        'name': self._names[sprite_index],
+                        'location': offset,
+                        'bounding_box': bounding_box,
+                    }
+
+        patch_probs = np.prod(patch_probs, 0)
+
         first_px = hashed[x][y]
         # given pixel (x, y)
         # what is the joint probability of (x, y) and (x - 1, y)
@@ -371,21 +414,6 @@ class SpriteTree:
             np.copyto(probs[i], inverted_pw_probs[key][:, temp_x, temp_y])
         probs = np.prod(probs, 0)
 
-        patch = self.get_target_patch_from_image(image, x, y)
-        patch_probs = np.zeros((4, 85))
-
-        for i, s in enumerate(self._patch_probabilites):
-            temp = np.array([
-                s['height'].get(patch['height'], 0),
-                s['width'].get(patch['width'], 0),
-                s['area'].get(patch['area'], 0),
-                s['runs'].get(patch['runs'], 0),
-            ])
-            if np.any(np.isclose(temp, 1)) and not np.any(np.isclose(temp, 0)):
-                temp = np.ones_like(temp.shape)
-            np.copyto(patch_probs[:, i], temp)
-
-        patch_probs = np.prod(patch_probs, 0)
         return np.argmax(patch_probs)
 
     def get_target_patch_from_image(self, image, x, y):
@@ -417,8 +445,10 @@ class SpriteTree:
         return self._pairwise_probabilities['vert'][:, top, bottom]
 
     def get_patches(self):
+        # TODO: The patch runs may include runs from other patches.
+        # Possible fix: flag them using negative values
         all_patches = []
-        for s in self._sprites:
+        for i, s in enumerate(self._sprites):
             mask_shape = (s.shape[0] + 2, s.shape[1] + 2)
             r, g, b, a = cv2.split(s)
             s_patches = []
@@ -435,7 +465,7 @@ class SpriteTree:
                 bb = np.nonzero(trimmed_mask)
                 x1, y1 = min(bb[0]), min(bb[1])
                 x2, y2 = max(bb[0]), max(bb[1])
-                bb = self.get_bounding_box(mask)
+                bb = self.get_bounding_box(trimmed_mask)
 
                 a = np.logical_and(np.logical_not(trimmed_mask), a).astype('ubyte')
                 s_patches.append({
@@ -445,6 +475,7 @@ class SpriteTree:
                     'bounding_box': bb,
                     'area': len(np.nonzero(trimmed_mask)[0]),
                     'runs': self.get_patch_runs(trimmed_mask),
+                    'offset': bb[0],
                 })
             all_patches.append(s_patches)
         return all_patches

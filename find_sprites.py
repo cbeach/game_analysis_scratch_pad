@@ -48,18 +48,11 @@ class SegmentedImage:
         hashed = self.hashed_bg_color_to_zero(self.hash_image())
         probs = np.zeros(hashed.shape + (3,), dtype='ubyte')
         not_zeros = np.nonzero(hashed)
-        names = self._sprite_tree._names
-        sprite_names = set()
-        for x, y in zip(*not_zeros):
-            p = self._sprite_tree.most_probable_sprite(hashed, self._image, x, y)
-            index_of_max = np.argmax(p)
-            sprite_names.add(names[index_of_max])
-            if names[index_of_max] == 'small_jump':
-                color = np.array((0, 255, 0), dtype='ubyte')
-            else:
-                color = np.array((0, 0, 255), dtype='ubyte')
-            np.copyto(probs[x][y], color)
-        return list(sprite_names)
+        sprites = [self._sprite_tree.most_probable_sprite(hashed, self._image, x, y)
+                   for x, y in zip(*not_zeros)]
+        bounding_boxes = set([s['bounding_box'] for s in sprites if isinstance(s, dict) is True])
+        names = set([s['name'] for s in sprites if isinstance(s, dict) is True])
+        return bounding_boxes, names
 
     def background_color(self, hashed=True):
         return 0xFF848a if hashed is True else (255, 132, 138)
@@ -103,9 +96,10 @@ def main():
     # blit(self, image, sprite, mask, x, y):
     image = img_f.blit(image, s[:, :, :3], s[:, :, 3], 50, 50)
     si = SegmentedImage(st, image)
-    sprt = si.find_sprites()
-    print(sprt)
-    cprint('{}: {}'.format(sprt, st._names[sprt]), 'green')
+    print(np.nonzero(np.where(si._hashed == si.background_color(), 0, si._hashed)))
+    bounding_boxes, names = si.find_sprites()
+    cprint(bounding_boxes, 'cyan')
+    cprint(names, 'blue')
     sys.exit()
 
     file_names = glob('data/*')
