@@ -50,6 +50,7 @@ class SegmentedImage:
         not_zeros = np.nonzero(hashed)
         sprites = [self._sprite_tree.most_probable_sprite(hashed, self._image, x, y)
                    for x, y in zip(*not_zeros)]
+        #TODO: If there is only one possibility, erase the sprite.
         bounding_boxes = set([s['bounding_box'] for s in sprites if isinstance(s, dict) is True])
         names = set([s['name'] for s in sprites if isinstance(s, dict) is True])
         return bounding_boxes, names

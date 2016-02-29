@@ -1,3 +1,49 @@
+# Couchbase 
+
+counters:
+    game_number,
+    play_number:<game_number>
+
+games: game:<game_number>: {
+    'id': <game_number>,
+    'name': <string_name>,
+    'system': <system>,
+    'file_name': <path>,
+}
+
+Sprites: sprites:<game> [
+    {
+        'id': <sprite_id>,
+        'path': <absolute_path>'
+    }, ...
+]
+
+Frame keys: frame:<game_number>:<play_number>:<frame_number> {
+    'frame_number': <int>,
+    'play_number': <int>,
+    'game_number': <int>,
+    'path': <absolute_path>,
+    'spries': [
+        {
+            'id': <sprite_id>,
+            'bounding_boxes': [
+                {
+                    'x1': <int>,
+                    'y1': <int>,
+                    'x2': <int>,
+                    'y2': <int>,
+                },
+            ]
+        }
+    ],
+    'signal': {
+        'up': false,
+        'down': true,
+        ...
+    }
+}
+
+
 # Currently working on
 The algorithm finds runs properly
 

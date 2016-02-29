@@ -10,3 +10,4 @@ nestopia/*
 roms/NES/original/
 roms/NES/NESRen/
 analyzed/*
+couchbase_setup.py
